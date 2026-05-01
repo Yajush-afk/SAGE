@@ -1,0 +1,33 @@
+# Local Setup
+
+SAGE is designed to run without paid APIs.
+
+Target development environment:
+
+- Fedora KDE Wayland
+- Conda-managed Python 3.12
+- ffmpeg
+- Whisper.cpp
+- Ollama with Gemma 4
+- Piper
+
+Create the Python environment:
+
+```bash
+conda env create -f environment.yml
+conda activate sage
+```
+
+Verify the scaffold:
+
+```bash
+sage --help
+pytest
+ruff check .
+```
+
+The first MVP will use a KDE global shortcut that invokes:
+
+```bash
+sage listen-once
+```

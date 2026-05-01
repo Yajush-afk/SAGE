@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sage-local-assistant"
+version = "0.1.0"
+description = "Local-first voice command layer for developer laptops."
+readme = "README.md"
+requires-python = ">=3.12,<3.15"
+authors = [
+  { name = "SAGE Contributors" }
+]
+dependencies = [
+  "fastapi>=0.115",
+  "pydantic>=2.10",
+  "uvicorn[standard]>=0.34",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3",
+  "ruff>=0.9",
+]
+
+[project.scripts]
+sage = "sage.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["sage*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
