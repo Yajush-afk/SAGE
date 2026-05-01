@@ -43,7 +43,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 0
 
-    print("SAGE Phase 0 scaffold is installed. Runtime implementation starts in Phase 1.")
+    print("SAGE Phase 1 contracts are installed. Runtime implementation starts in Phase 2.")
     return 0
 
 

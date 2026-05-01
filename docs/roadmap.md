@@ -9,6 +9,8 @@ Repository and environment foundation.
 Core data contracts for voice commands, intent plans, tool calls, risk levels,
 and execution results.
 
+Status: implemented.
+
 ## Phase 2
 
 Local daemon and API.

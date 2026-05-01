@@ -22,3 +22,19 @@ KDE shortcut
   -> Piper spoken response
   -> SQLite logs
 ```
+
+## Shared Contracts
+
+The command pipeline shares a single contract layer in `sage.contracts`.
+
+Core contracts:
+
+- `VoiceCommand`
+- `ToolCall`
+- `IntentPlan`
+- `ToolResult`
+- `ExecutionResult`
+- `ToolSchema`
+
+All contracts reject unknown fields by default. This keeps model output,
+tool input, API payloads, and logs aligned around explicit schemas.
