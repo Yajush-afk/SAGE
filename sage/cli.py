@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import json
+import sys
+from urllib import error, request
 
 from sage import __version__
+from sage.daemon.server import run as run_daemon
+
+DEFAULT_DAEMON_URL = "http://127.0.0.1:8765"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -22,17 +28,65 @@ def build_parser() -> argparse.ArgumentParser:
 
     daemon = subcommands.add_parser("daemon", help="Manage the local SAGE daemon.")
     daemon_subcommands = daemon.add_subparsers(dest="daemon_command")
-    daemon_subcommands.add_parser("start", help="Start the local daemon.")
-    daemon_subcommands.add_parser("health", help="Check daemon health.")
+    daemon_start = daemon_subcommands.add_parser("start", help="Start the local daemon.")
+    daemon_start.add_argument("--host", default="127.0.0.1", help="Daemon bind host.")
+    daemon_start.add_argument("--port", default=8765, type=int, help="Daemon bind port.")
+    daemon_health = daemon_subcommands.add_parser("health", help="Check daemon health.")
+    daemon_health.add_argument("--url", default=DEFAULT_DAEMON_URL, help="Daemon base URL.")
 
-    subcommands.add_parser("listen-once", help="Record one voice command.")
+    listen_once = subcommands.add_parser("listen-once", help="Record one voice command.")
+    listen_once.add_argument("--url", default=DEFAULT_DAEMON_URL, help="Daemon base URL.")
 
     text = subcommands.add_parser("text", help="Send a text command through the assistant.")
     text.add_argument("command_text", help="Command text to process.")
+    text.add_argument("--url", default=DEFAULT_DAEMON_URL, help="Daemon base URL.")
 
     subcommands.add_parser("doctor", help="Check local SAGE dependencies.")
 
+    commands = subcommands.add_parser("commands", help="Inspect command history.")
+    commands_subcommands = commands.add_subparsers(dest="commands_command")
+    recent = commands_subcommands.add_parser("recent", help="List recent commands.")
+    recent.add_argument("--url", default=DEFAULT_DAEMON_URL, help="Daemon base URL.")
+    recent.add_argument("--limit", default=20, type=int, help="Number of commands to show.")
+
+    tools = subcommands.add_parser("tools", help="Inspect registered tools.")
+    tools_subcommands = tools.add_subparsers(dest="tools_command")
+    tools_list = tools_subcommands.add_parser("list", help="List registered tools.")
+    tools_list.add_argument("--url", default=DEFAULT_DAEMON_URL, help="Daemon base URL.")
+
     return parser
+
+
+def request_json(
+    method: str,
+    url: str,
+    payload: dict[str, object] | None = None,
+) -> tuple[int, object]:
+    data = None
+    headers = {"Accept": "application/json"}
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+
+    req = request.Request(url=url, data=data, headers=headers, method=method)
+    try:
+        with request.urlopen(req, timeout=5) as response:
+            body = response.read().decode("utf-8")
+            return response.status, json.loads(body) if body else None
+    except error.HTTPError as exc:
+        body = exc.read().decode("utf-8")
+        parsed_body = json.loads(body) if body else {"detail": exc.reason}
+        return exc.code, parsed_body
+    except error.URLError as exc:
+        raise RuntimeError(f"could not reach SAGE daemon: {exc.reason}") from exc
+
+
+def print_json(value: object) -> None:
+    print(json.dumps(value, indent=2, sort_keys=True))
+
+
+def daemon_url(base_url: str, path: str) -> str:
+    return f"{base_url.rstrip('/')}{path}"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -43,8 +97,52 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 0
 
-    print("SAGE Phase 1 contracts are installed. Runtime implementation starts in Phase 2.")
-    return 0
+    try:
+        if args.command == "daemon" and args.daemon_command == "start":
+            run_daemon(host=args.host, port=args.port)
+            return 0
+
+        if args.command == "daemon" and args.daemon_command == "health":
+            status, body = request_json("GET", daemon_url(args.url, "/health"))
+            print_json(body)
+            return 0 if status < 400 else 1
+
+        if args.command == "text":
+            status, body = request_json(
+                "POST",
+                daemon_url(args.url, "/commands/text"),
+                {"command_text": args.command_text, "source": "cli_debug"},
+            )
+            print_json(body)
+            return 0 if status < 400 else 1
+
+        if args.command == "listen-once":
+            status, body = request_json("POST", daemon_url(args.url, "/commands/listen-once"))
+            print_json(body)
+            return 0 if status < 400 else 1
+
+        if args.command == "commands" and args.commands_command == "recent":
+            status, body = request_json(
+                "GET",
+                daemon_url(args.url, f"/commands/recent?limit={args.limit}"),
+            )
+            print_json(body)
+            return 0 if status < 400 else 1
+
+        if args.command == "tools" and args.tools_command == "list":
+            status, body = request_json("GET", daemon_url(args.url, "/tools"))
+            print_json(body)
+            return 0 if status < 400 else 1
+
+        if args.command == "doctor":
+            print("SAGE doctor is implemented in a later phase.")
+            return 0
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    parser.print_help()
+    return 1
 
 
 if __name__ == "__main__":

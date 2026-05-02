@@ -96,6 +96,67 @@ class ToolSchema(SageModel):
     parameters_schema: dict[str, Any]
 
 
+class CommandStatus(StrEnum):
+    ACCEPTED = "accepted"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    NOT_IMPLEMENTED = "not_implemented"
+
+
+class CommandRecord(SageModel):
+    id: str = Field(min_length=1)
+    created_at: datetime
+    transcript: str = Field(min_length=1)
+    source: Literal["push_to_talk", "cli_debug", "api"]
+    status: CommandStatus
+    intent_plan: IntentPlan | None = None
+    execution_result: ExecutionResult | None = None
+    error: str | None = None
+
+
+class RuntimeSettings(SageModel):
+    ollama_url: str = "http://127.0.0.1:11434"
+    model_name: str = "gemma4"
+    whisper_provider: str = "whisper_cpp"
+    whisper_endpoint: str = "http://127.0.0.1:2022/v1"
+    piper_enabled: bool = True
+    piper_voice_path: Path | None = None
+    default_editor: str = "code"
+    max_recording_seconds: int = Field(default=12, ge=1, le=120)
+    confirmation_timeout_seconds: int = Field(default=30, ge=5, le=300)
+
+
+class RuntimeSettingsUpdate(SageModel):
+    ollama_url: str | None = None
+    model_name: str | None = None
+    whisper_provider: str | None = None
+    whisper_endpoint: str | None = None
+    piper_enabled: bool | None = None
+    piper_voice_path: Path | None = None
+    default_editor: str | None = None
+    max_recording_seconds: int | None = Field(default=None, ge=1, le=120)
+    confirmation_timeout_seconds: int | None = Field(default=None, ge=5, le=300)
+
+
+class HealthResponse(SageModel):
+    status: Literal["ok"]
+    version: str
+    service: Literal["sage-daemon"] = "sage-daemon"
+
+
+class TextCommandRequest(SageModel):
+    command_text: str = Field(min_length=1)
+    source: Literal["cli_debug", "api"] = "api"
+
+    @field_validator("command_text")
+    @classmethod
+    def command_text_must_have_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("command_text must contain non-whitespace text")
+        return normalized
+
+
 def export_contract_schemas() -> dict[str, dict[str, Any]]:
     """Return JSON schemas for contracts that are shared with the planner."""
 
@@ -106,4 +167,8 @@ def export_contract_schemas() -> dict[str, dict[str, Any]]:
         "ToolResult": ToolResult.model_json_schema(),
         "ExecutionResult": ExecutionResult.model_json_schema(),
         "ToolSchema": ToolSchema.model_json_schema(),
+        "CommandRecord": CommandRecord.model_json_schema(),
+        "RuntimeSettings": RuntimeSettings.model_json_schema(),
+        "HealthResponse": HealthResponse.model_json_schema(),
+        "TextCommandRequest": TextCommandRequest.model_json_schema(),
     }

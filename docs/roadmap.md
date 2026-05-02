@@ -15,6 +15,8 @@ Status: implemented.
 
 Local daemon and API.
 
+Status: implemented.
+
 ## Phase 3
 
 Whisper.cpp speech-to-text.

@@ -38,3 +38,20 @@ Core contracts:
 
 All contracts reject unknown fields by default. This keeps model output,
 tool input, API payloads, and logs aligned around explicit schemas.
+
+## Phase 2 Local API
+
+The local daemon exposes a FastAPI app on `127.0.0.1:8765` by default.
+
+Initial endpoints:
+
+- `GET /health`
+- `POST /commands/text`
+- `POST /commands/listen-once`
+- `GET /commands/recent`
+- `GET /tools`
+- `GET /settings`
+- `PUT /settings`
+
+Phase 2 intentionally keeps command history in memory. SQLite persistence is
+introduced later with memory and observability.

@@ -26,6 +26,21 @@ pytest
 ruff check .
 ```
 
+Start the Phase 2 local daemon:
+
+```bash
+sage daemon start
+```
+
+In another shell:
+
+```bash
+sage daemon health
+sage text "start the frontend"
+sage commands recent
+sage tools list
+```
+
 The first MVP will use a KDE global shortcut that invokes:
 
 ```bash
