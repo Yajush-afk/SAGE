@@ -8,6 +8,7 @@ from sage.contracts import (
     RiskLevel,
     RuntimeSettings,
     RuntimeSettingsUpdate,
+    ToolCall,
     TranscriptionResult,
 )
 from sage.daemon.state import DaemonState
@@ -57,6 +58,40 @@ class FakePlanner:
             actions=[],
             risk=RiskLevel.STATE_CHANGING if "start" in transcript else RiskLevel.READ_ONLY,
             requires_confirmation="start" in transcript,
+        )
+
+
+class DetectProjectPlanner:
+    def plan(
+        self,
+        transcript: str,
+        context: PlannerContext,
+        settings: RuntimeSettings,
+    ) -> IntentPlan:
+        return IntentPlan(
+            intent="inspect_project",
+            confidence=0.9,
+            summary="Detect project markers.",
+            actions=[ToolCall(tool_name="detect_project", arguments={})],
+            risk=RiskLevel.READ_ONLY,
+            requires_confirmation=False,
+        )
+
+
+class UnknownToolPlanner:
+    def plan(
+        self,
+        transcript: str,
+        context: PlannerContext,
+        settings: RuntimeSettings,
+    ) -> IntentPlan:
+        return IntentPlan(
+            intent="mystery",
+            confidence=0.9,
+            summary="Use an unknown tool.",
+            actions=[ToolCall(tool_name="missing_tool", arguments={})],
+            risk=RiskLevel.READ_ONLY,
+            requires_confirmation=False,
         )
 
 
@@ -162,13 +197,17 @@ def test_listen_once_records_failed_transcription(tmp_path):
     assert response.json()["error"] == "transcription failed"
 
 
-def test_tools_endpoint_returns_empty_registry_for_phase_2():
+def test_tools_endpoint_returns_registered_tools():
     client = make_client()
 
     response = client.get("/tools")
 
     assert response.status_code == 200
-    assert response.json() == []
+    assert {tool["name"] for tool in response.json()} >= {
+        "detect_project",
+        "get_project_summary",
+        "find_process_on_port",
+    }
 
 
 def test_settings_can_be_read_and_updated():
@@ -185,6 +224,7 @@ def test_settings_can_be_read_and_updated():
             "audio_input": "default",
             "keep_raw_audio": True,
             "ollama_num_ctx": 8192,
+            "whisper_timeout_seconds": 60,
         },
     )
 
@@ -197,6 +237,7 @@ def test_settings_can_be_read_and_updated():
     assert updated.json()["whisper_provider"] == "whisper_cpp_cli"
     assert updated.json()["keep_raw_audio"] is True
     assert updated.json()["ollama_num_ctx"] == 8192
+    assert updated.json()["whisper_timeout_seconds"] == 60
 
 
 def test_settings_update_validates_bounds():
@@ -221,7 +262,7 @@ def test_confirm_command_accepts_required_phrase():
 
     assert confirmed.status_code == 200
     assert confirmed.json()["status"] == "confirmed"
-    assert confirmed.json()["error"] == "Executor is not implemented in Phase 5."
+    assert confirmed.json()["error"] == "No executable tool actions."
 
 
 def test_confirm_command_rejects_wrong_phrase():
@@ -237,8 +278,12 @@ def test_confirm_command_rejects_wrong_phrase():
     )
 
     assert confirmed.status_code == 200
-    assert confirmed.json()["status"] == "failed"
+    assert confirmed.json()["status"] == "awaiting_confirmation"
     assert "Confirmation phrase did not match" in confirmed.json()["error"]
+
+    recent = client.get("/commands/recent?limit=1")
+
+    assert recent.json()[0]["status"] == "awaiting_confirmation"
 
 
 def test_cancel_command_updates_status():
@@ -260,3 +305,48 @@ def test_confirm_unknown_command_returns_404():
     response = client.post("/commands/missing/confirm", json={"phrase": "confirm start"})
 
     assert response.status_code == 404
+
+
+def test_read_only_tool_executes_immediately(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n")
+    client = make_client(DaemonState(planner=DetectProjectPlanner()))
+
+    response = client.post(
+        "/commands/text",
+        json={"command_text": "what project is this", "source": "api", "cwd": str(tmp_path)},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "completed"
+    assert response.json()["execution_result"]["success"] is True
+    assert response.json()["execution_result"]["tool_results"][0]["tool_name"] == "detect_project"
+
+
+def test_unknown_tool_is_blocked(tmp_path):
+    client = make_client(DaemonState(planner=UnknownToolPlanner()))
+
+    response = client.post(
+        "/commands/text",
+        json={"command_text": "do mystery thing", "source": "api", "cwd": str(tmp_path)},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "blocked"
+    assert "unknown tool" in response.json()["error"]
+
+
+def test_text_command_rejects_missing_cwd():
+    client = make_client(DaemonState(planner=DetectProjectPlanner()))
+
+    response = client.post(
+        "/commands/text",
+        json={
+            "command_text": "what project is this",
+            "source": "api",
+            "cwd": "/definitely/missing/sage/path",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    assert "cwd does not exist" in response.json()["error"]

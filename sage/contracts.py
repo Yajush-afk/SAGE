@@ -150,6 +150,7 @@ class CommandRecord(SageModel):
     transcript: str = Field(min_length=1)
     source: Literal["push_to_talk", "cli_debug", "api"]
     status: CommandStatus
+    cwd: Path | None = None
     raw_audio_path: Path | None = None
     transcription: TranscriptionResult | None = None
     intent_plan: IntentPlan | None = None
@@ -165,6 +166,7 @@ class RuntimeSettings(SageModel):
     whisper_endpoint: str = "http://127.0.0.1:2022/v1"
     whisper_cli_path: str = "whisper-cli"
     whisper_model_path: Path | None = None
+    whisper_timeout_seconds: int = Field(default=120, ge=1, le=600)
     piper_enabled: bool = True
     piper_voice_path: Path | None = None
     default_editor: str = "code"
@@ -179,6 +181,7 @@ class RuntimeSettings(SageModel):
     ollama_num_ctx: int = Field(default=4096, ge=512, le=262144)
     planner_repair_attempts: int = Field(default=1, ge=0, le=3)
     confirmation_timeout_seconds: int = Field(default=30, ge=5, le=300)
+    tool_timeout_seconds: int = Field(default=120, ge=1, le=600)
 
 
 class RuntimeSettingsUpdate(SageModel):
@@ -188,6 +191,7 @@ class RuntimeSettingsUpdate(SageModel):
     whisper_endpoint: str | None = None
     whisper_cli_path: str | None = None
     whisper_model_path: Path | None = None
+    whisper_timeout_seconds: int | None = Field(default=None, ge=1, le=600)
     piper_enabled: bool | None = None
     piper_voice_path: Path | None = None
     default_editor: str | None = None
@@ -202,6 +206,7 @@ class RuntimeSettingsUpdate(SageModel):
     ollama_num_ctx: int | None = Field(default=None, ge=512, le=262144)
     planner_repair_attempts: int | None = Field(default=None, ge=0, le=3)
     confirmation_timeout_seconds: int | None = Field(default=None, ge=5, le=300)
+    tool_timeout_seconds: int | None = Field(default=None, ge=1, le=600)
 
 
 class HealthResponse(SageModel):

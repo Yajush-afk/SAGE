@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,6 +13,7 @@ from sage.contracts import (
     CommandRecord,
     CommandStatus,
     ConfirmationRequest,
+    ExecutionResult,
     IntentPlan,
     PlannerContext,
     RecentCommand,
@@ -21,10 +23,12 @@ from sage.contracts import (
     SafetyAction,
     SafetyDecision,
     TextCommandRequest,
+    ToolResult,
 )
 from sage.planner import OllamaPlanner, Planner, PlannerError
 from sage.safety import SafetyPolicy, confirmation_matches
 from sage.stt import STTProvider, TranscriptionError, build_stt_provider
+from sage.tools import ExecutionContext, ToolExecutionError, ToolRegistry
 
 
 class CommandNotFoundError(KeyError):
@@ -45,6 +49,7 @@ class DaemonState:
         stt_provider: STTProvider | None = None,
         planner: Planner | None = None,
         safety_policy: SafetyPolicy | None = None,
+        tool_registry: ToolRegistry | None = None,
     ) -> None:
         self._settings = RuntimeSettings()
         self._recent_commands: deque[CommandRecord] = deque(maxlen=max_recent_commands)
@@ -52,6 +57,7 @@ class DaemonState:
         self._stt_provider = stt_provider
         self._planner = planner or OllamaPlanner()
         self._safety_policy = safety_policy or SafetyPolicy()
+        self._tool_registry = tool_registry or ToolRegistry()
 
     @property
     def settings(self) -> RuntimeSettings:
@@ -67,23 +73,36 @@ class DaemonState:
             return []
         return list(self._recent_commands)[-limit:][::-1]
 
+    def list_tools(self):
+        return self._tool_registry.list_schemas()
+
     def accept_text_command(self, request: TextCommandRequest) -> CommandRecord:
         now = datetime.now(UTC)
         command_id = f"cmd_{uuid4().hex}"
-        cwd = request.cwd or Path.cwd()
-
         try:
-            plan = self._plan_transcript(request.command_text, cwd)
-            safety_decision = self._evaluate_safety(plan)
+            cwd = self._resolve_cwd(request.cwd)
+        except ValueError as exc:
             record = CommandRecord(
                 id=command_id,
                 created_at=now,
                 transcript=request.command_text,
                 source=request.source,
-                status=self._status_for_safety_decision(safety_decision),
-                intent_plan=plan,
-                safety_decision=safety_decision,
-                error=self._error_for_safety_decision(safety_decision),
+                status=CommandStatus.FAILED,
+                cwd=request.cwd,
+                error=str(exc),
+            )
+            self._recent_commands.append(record)
+            return record
+
+        try:
+            plan = self._plan_transcript(request.command_text, cwd)
+            record = self._record_from_plan(
+                command_id=command_id,
+                created_at=now,
+                transcript=request.command_text,
+                source=request.source,
+                plan=plan,
+                cwd=cwd,
             )
         except PlannerError as exc:
             record = CommandRecord(
@@ -92,6 +111,7 @@ class DaemonState:
                 transcript=request.command_text,
                 source=request.source,
                 status=CommandStatus.FAILED,
+                cwd=cwd,
                 error=str(exc),
             )
 
@@ -109,30 +129,28 @@ class DaemonState:
             stt_provider = self._stt_provider or build_stt_provider(self._settings)
             transcription = stt_provider.transcribe(recording.path, self._settings)
             try:
-                plan = self._plan_transcript(transcription.text, Path.cwd())
-                safety_decision = self._evaluate_safety(plan)
-                record = CommandRecord(
-                    id=command_id,
+                plan = self._plan_transcript(transcription.text, self._resolve_cwd(Path.cwd()))
+                record = self._record_from_plan(
+                    command_id=command_id,
                     created_at=now,
                     transcript=transcription.text,
                     source="push_to_talk",
-                    status=self._status_for_safety_decision(safety_decision),
+                    plan=plan,
+                    cwd=self._resolve_cwd(Path.cwd()),
                     raw_audio_path=recording.path if self._settings.keep_raw_audio else None,
                     transcription=transcription,
-                    intent_plan=plan,
-                    safety_decision=safety_decision,
-                    error=self._error_for_safety_decision(safety_decision),
                 )
             except PlannerError as exc:
                 record = CommandRecord(
                     id=command_id,
-                    created_at=now,
-                    transcript=transcription.text,
-                    source="push_to_talk",
-                    status=CommandStatus.FAILED,
-                    raw_audio_path=recording.path if self._settings.keep_raw_audio else None,
-                    transcription=transcription,
-                    error=str(exc),
+                created_at=now,
+                transcript=transcription.text,
+                source="push_to_talk",
+                status=CommandStatus.FAILED,
+                cwd=Path.cwd(),
+                raw_audio_path=recording.path if self._settings.keep_raw_audio else None,
+                transcription=transcription,
+                error=str(exc),
                 )
         except (AudioRecordingError, TranscriptionError, OSError) as exc:
             record = CommandRecord(
@@ -141,6 +159,7 @@ class DaemonState:
                 transcript="[voice command unavailable]",
                 source="push_to_talk",
                 status=CommandStatus.FAILED,
+                cwd=Path.cwd(),
                 raw_audio_path=raw_audio_path if self._settings.keep_raw_audio else None,
                 error=str(exc),
             )
@@ -154,35 +173,50 @@ class DaemonState:
     def confirm_command(self, command_id: str, request: ConfirmationRequest) -> CommandRecord:
         record = self._find_command(command_id)
         if record.status != CommandStatus.AWAITING_CONFIRMATION or record.safety_decision is None:
+            return record.model_copy(update={"error": "Command is not awaiting confirmation."})
+
+        now = datetime.now(UTC)
+        if (
+            record.safety_decision.expires_at is not None
+            and now > record.safety_decision.expires_at
+        ):
             return self._replace_command(
                 record.model_copy(
                     update={
                         "status": CommandStatus.FAILED,
-                        "error": "Command is not awaiting confirmation.",
+                        "error": "Confirmation window expired.",
                     }
                 )
             )
 
         if not confirmation_matches(record.safety_decision, request.phrase):
-            return self._replace_command(
-                record.model_copy(
-                    update={
-                        "status": CommandStatus.FAILED,
-                        "error": (
-                            "Confirmation phrase did not match or confirmation window expired."
-                        ),
-                    }
-                )
-            )
-
-        return self._replace_command(
-            record.model_copy(
+            return record.model_copy(
                 update={
-                    "status": CommandStatus.CONFIRMED,
-                    "error": "Executor is not implemented in Phase 5.",
+                    "error": (
+                        f"Confirmation phrase did not match. Say "
+                        f"'{record.safety_decision.confirmation_phrase}' to continue."
+                    )
                 }
             )
+
+        confirmed_decision = record.safety_decision.model_copy(update={"expires_at": None})
+        confirmed_record = record.model_copy(
+            update={
+                "status": CommandStatus.CONFIRMED,
+                "safety_decision": confirmed_decision,
+                "error": None,
+            }
         )
+        if confirmed_record.intent_plan and confirmed_record.intent_plan.actions:
+            confirmed_record = self._execute_record(
+                confirmed_record,
+                self._resolve_cwd(confirmed_record.cwd),
+            )
+        elif confirmed_record.intent_plan:
+            confirmed_record = confirmed_record.model_copy(
+                update={"error": "No executable tool actions."}
+            )
+        return self._replace_command(confirmed_record)
 
     def cancel_command(self, command_id: str) -> CommandRecord:
         record = self._find_command(command_id)
@@ -198,11 +232,124 @@ class DaemonState:
     def _plan_transcript(self, transcript: str, cwd: Path) -> IntentPlan:
         context = PlannerContext(
             cwd=cwd,
-            available_tools=[],
+            available_tools=self._tool_registry.list_schemas(),
             safety_rules_summary=self._safety_rules_summary(),
             recent_commands=self._recent_command_context(),
         )
         return self._planner.plan(transcript, context, self._settings)
+
+    def _record_from_plan(
+        self,
+        command_id: str,
+        created_at: datetime,
+        transcript: str,
+        source: str,
+        plan: IntentPlan,
+        cwd: Path,
+        raw_audio_path: Path | None = None,
+        transcription=None,
+    ) -> CommandRecord:
+        try:
+            plan = self._validate_and_apply_tool_risk(plan)
+        except ToolExecutionError as exc:
+            decision = SafetyDecision(
+                action=SafetyAction.BLOCK,
+                risk=RiskLevel.BLOCKED,
+                reason=str(exc),
+            )
+            return CommandRecord(
+                id=command_id,
+                created_at=created_at,
+                transcript=transcript,
+                source=source,
+                status=CommandStatus.BLOCKED,
+                cwd=cwd,
+                raw_audio_path=raw_audio_path,
+                transcription=transcription,
+                intent_plan=plan,
+                safety_decision=decision,
+                error=str(exc),
+            )
+
+        safety_decision = self._evaluate_safety(plan)
+        record = CommandRecord(
+            id=command_id,
+            created_at=created_at,
+            transcript=transcript,
+            source=source,
+            status=self._status_for_safety_decision(safety_decision),
+            cwd=cwd,
+            raw_audio_path=raw_audio_path,
+            transcription=transcription,
+            intent_plan=plan,
+            safety_decision=safety_decision,
+            error=self._error_for_safety_decision(safety_decision, plan),
+        )
+        if safety_decision.action == SafetyAction.ALLOW and plan.actions:
+            return self._execute_record(record, cwd)
+        return record
+
+    def _validate_and_apply_tool_risk(self, plan: IntentPlan) -> IntentPlan:
+        highest_risk = plan.risk
+        for action in plan.actions:
+            self._tool_registry.validate_tool_call(action)
+            highest_risk = max_risk(
+                highest_risk,
+                self._tool_registry.risk_for_tool(action.tool_name),
+            )
+        return plan.model_copy(
+            update={
+                "risk": highest_risk,
+                "requires_confirmation": (
+                    plan.requires_confirmation or highest_risk == RiskLevel.STATE_CHANGING
+                ),
+            }
+        )
+
+    def _execute_record(self, record: CommandRecord, cwd: Path) -> CommandRecord:
+        if record.intent_plan is None:
+            return record.model_copy(
+                update={"status": CommandStatus.FAILED, "error": "No intent plan."}
+            )
+
+        started_at = datetime.now(UTC)
+        results: list[ToolResult] = []
+        context = ExecutionContext(
+            command_id=record.id,
+            cwd=cwd,
+            timeout_seconds=self._settings.tool_timeout_seconds,
+        )
+        try:
+            for action in record.intent_plan.actions:
+                results.append(self._tool_registry.run(action, context))
+        except (ToolExecutionError, ValueError, OSError, subprocess.TimeoutExpired) as exc:
+            results.append(
+                ToolResult(
+                    tool_name=action.tool_name,
+                    success=False,
+                    summary="Tool execution failed.",
+                    details=str(exc),
+                    duration_ms=0,
+                )
+            )
+
+        success = all(result.success for result in results)
+        latency_ms = int((datetime.now(UTC) - started_at).total_seconds() * 1000)
+        execution_result = ExecutionResult(
+            command_id=record.id,
+            success=success,
+            spoken_summary="Command completed." if success else "Command failed.",
+            details="\n".join(result.summary for result in results),
+            tool_results=results,
+            latency_ms=latency_ms,
+        )
+        return record.model_copy(
+            update={
+                "status": CommandStatus.COMPLETED if success else CommandStatus.FAILED,
+                "execution_result": execution_result,
+                "error": None if success else execution_result.details,
+            }
+        )
 
     def _evaluate_safety(self, plan: IntentPlan) -> SafetyDecision:
         return self._safety_policy.evaluate(
@@ -219,9 +366,9 @@ class DaemonState:
         return CommandStatus.BLOCKED
 
     @staticmethod
-    def _error_for_safety_decision(decision: SafetyDecision) -> str:
+    def _error_for_safety_decision(decision: SafetyDecision, plan: IntentPlan) -> str | None:
         if decision.action == SafetyAction.ALLOW:
-            return "Executor is not implemented in Phase 5."
+            return None if plan.actions else "No executable tool actions."
         if decision.action == SafetyAction.REQUIRE_CONFIRMATION:
             return decision.reason
         return decision.reason
@@ -255,9 +402,32 @@ class DaemonState:
     def _safety_rules_summary() -> str:
         return (
             f"Allowed risk levels: {', '.join(level.value for level in RiskLevel)}. "
-            "No commands execute in Phase 5. Destructive and privileged work is blocked. "
-            "State-changing work requires explicit confirmation."
+            "Destructive and privileged work is blocked. State-changing work requires "
+            "explicit confirmation. Only registered typed tools may execute."
         )
+
+    @staticmethod
+    def _resolve_cwd(cwd: Path | None) -> Path:
+        resolved = (cwd or Path.cwd()).expanduser().resolve(strict=False)
+        if not resolved.exists():
+            raise ValueError(f"cwd does not exist: {resolved}")
+        if not resolved.is_dir():
+            raise ValueError(f"cwd is not a directory: {resolved}")
+        return resolved
+
+
+RISK_ORDER = {
+    RiskLevel.READ_ONLY: 0,
+    RiskLevel.SAFE_EXECUTION: 1,
+    RiskLevel.STATE_CHANGING: 2,
+    RiskLevel.DESTRUCTIVE: 3,
+    RiskLevel.PRIVILEGED: 4,
+    RiskLevel.BLOCKED: 5,
+}
+
+
+def max_risk(left: RiskLevel, right: RiskLevel) -> RiskLevel:
+    return left if RISK_ORDER[left] >= RISK_ORDER[right] else right
 
 
 daemon_state = DaemonState()

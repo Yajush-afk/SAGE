@@ -123,3 +123,25 @@ Confirmation and cancellation endpoints:
 
 Phase 5 still does not execute confirmed commands. A confirmed command is only
 marked `confirmed`; execution starts in the tool/executor phases.
+
+## Phase 6 Typed Tools
+
+SAGE now has a typed tool registry. The planner sees registered tool schemas, and
+the daemon validates every planned tool name and argument before execution.
+
+Initial tools:
+
+- `detect_project`
+- `get_project_summary`
+- `search_project_text`
+- `list_processes`
+- `find_process_on_port`
+- `run_tests`
+
+Execution rules:
+
+- read-only and safe-execution tools can run after planning
+- state-changing tools require confirmation before execution
+- unknown tools are blocked
+- tool paths are constrained to the command workspace
+- confirmed commands execute in the original command directory

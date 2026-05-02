@@ -141,12 +141,14 @@ def test_runtime_settings_accepts_audio_and_stt_settings():
         audio_channels=1,
         keep_raw_audio=True,
         ollama_num_ctx=8192,
+        whisper_timeout_seconds=60,
     )
 
     assert settings.whisper_provider == "whisper_cpp_cli"
     assert settings.max_recording_seconds == 5
     assert settings.keep_raw_audio is True
     assert settings.ollama_num_ctx == 8192
+    assert settings.whisper_timeout_seconds == 60
 
 
 def test_planner_context_accepts_minimal_context(tmp_path):

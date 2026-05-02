@@ -83,8 +83,20 @@ sage commands confirm <command-id> "confirm start"
 sage commands cancel <command-id>
 ```
 
-Confirmed commands still do not execute yet. They are only marked confirmed until
-the tool executor exists.
+After Phase 6, confirmed commands with registered tool actions can execute.
+Commands without executable tool actions are only marked confirmed.
+
+Phase 6 adds the first typed tools:
+
+```bash
+sage tools list
+sage text "what project is this"
+sage text "find process on port 3000"
+sage text "run tests"
+```
+
+The exact tool calls depend on the local model's structured plan. Unknown tools
+are blocked, and tool arguments are validated before execution.
 
 The first MVP will use a KDE global shortcut that invokes:
 

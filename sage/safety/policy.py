@@ -13,7 +13,6 @@ BLOCKED_INTENT_KEYWORDS: Final[tuple[str, ...]] = (
     "credential",
     "password",
     "secret",
-    "delete",
     "remove_file",
     "rm_rf",
     "git_reset",

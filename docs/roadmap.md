@@ -39,6 +39,8 @@ Status: implemented.
 
 Typed tool registry.
 
+Status: implemented.
+
 ## Phase 7
 
 Piper text-to-speech.

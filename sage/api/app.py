@@ -57,7 +57,7 @@ def create_app(state: DaemonState | None = None) -> FastAPI:
 
     @app.get("/tools", response_model=list[ToolSchema])
     def tools() -> list[ToolSchema]:
-        return []
+        return runtime_state.list_tools()
 
     @app.get("/settings", response_model=RuntimeSettings)
     def get_settings() -> RuntimeSettings:

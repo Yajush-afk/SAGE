@@ -31,6 +31,8 @@ Implemented Phase 5 behavior:
   `rm_rf` are blocked
 - confirmations expire according to `confirmation_timeout_seconds`
 - plain `yes` is not accepted as confirmation
+- wrong confirmation phrases do not consume the pending command
+- confirmed commands execute in their original command workspace
 
 Example confirmation phrases:
 

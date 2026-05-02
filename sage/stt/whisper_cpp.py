@@ -42,7 +42,7 @@ class WhisperCppHttpProvider:
 
         started_at = time.monotonic()
         try:
-            with request.urlopen(req, timeout=120) as response:
+            with request.urlopen(req, timeout=settings.whisper_timeout_seconds) as response:
                 raw_body = response.read().decode("utf-8")
         except error.URLError as exc:
             raise TranscriptionError(f"could not reach Whisper.cpp endpoint: {exc}") from exc
