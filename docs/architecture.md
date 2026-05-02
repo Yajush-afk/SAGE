@@ -177,3 +177,7 @@ text or voice
 The Electron control panel under `apps/electron-control-panel` reads from the
 daemon API and shows health, diagnostics, command history, tools, and workflows.
 It does not execute system commands directly.
+
+The daemon enables CORS only for the local control panel dev origins. The
+Electron main process uses context isolation, sandboxing, disabled Node
+integration, and blocks arbitrary navigation/window creation.

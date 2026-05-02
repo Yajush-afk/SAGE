@@ -115,12 +115,23 @@ sage doctor
 sage diagnostics
 ```
 
+`sage doctor` exits non-zero when required local dependencies are missing. Piper
+is required only when `piper_enabled` is true.
+
 The Electron control panel lives in `apps/electron-control-panel`:
 
 ```bash
 cd apps/electron-control-panel
 npm install
 npm run dev
+```
+
+The daemon allows the Vite control panel origins `http://127.0.0.1:5174` and
+`http://localhost:5174`. To open the Electron shell against the Vite dev server:
+
+```bash
+npm run dev
+npm run dev:electron
 ```
 
 The first MVP will use a KDE global shortcut that invokes:
