@@ -13,6 +13,7 @@ from sage.contracts import (
     CommandRecord,
     CommandStatus,
     ConfirmationRequest,
+    DiagnosticStatus,
     ExecutionResult,
     IntentPlan,
     PlannerContext,
@@ -24,11 +25,16 @@ from sage.contracts import (
     SafetyDecision,
     TextCommandRequest,
     ToolResult,
+    Workflow,
+    WorkflowStep,
 )
-from sage.planner import OllamaPlanner, Planner, PlannerError
+from sage.memory import SQLiteStore
+from sage.observability import run_diagnostics
+from sage.planner import OllamaPlanner, Planner, PlannerError, direct_plan
 from sage.safety import SafetyPolicy, confirmation_matches
 from sage.stt import STTProvider, TranscriptionError, build_stt_provider
 from sage.tools import ExecutionContext, ToolExecutionError, ToolRegistry
+from sage.tts import PiperTTSProvider, TTSProvider
 
 
 class CommandNotFoundError(KeyError):
@@ -50,14 +56,21 @@ class DaemonState:
         planner: Planner | None = None,
         safety_policy: SafetyPolicy | None = None,
         tool_registry: ToolRegistry | None = None,
+        tts_provider: TTSProvider | None = None,
+        store=None,
     ) -> None:
-        self._settings = RuntimeSettings()
+        default_settings = RuntimeSettings()
+        self._store = store or SQLiteStore(default_settings.database_path)
+        self._settings = self._store.load_settings() or default_settings
         self._recent_commands: deque[CommandRecord] = deque(maxlen=max_recent_commands)
+        for record in reversed(self._store.list_recent_commands(limit=max_recent_commands)):
+            self._recent_commands.append(record)
         self._recorder = recorder or FfmpegAudioRecorder()
         self._stt_provider = stt_provider
         self._planner = planner or OllamaPlanner()
         self._safety_policy = safety_policy or SafetyPolicy()
         self._tool_registry = tool_registry or ToolRegistry()
+        self._tts_provider = tts_provider or PiperTTSProvider()
 
     @property
     def settings(self) -> RuntimeSettings:
@@ -66,6 +79,7 @@ class DaemonState:
     def update_settings(self, update: RuntimeSettingsUpdate) -> RuntimeSettings:
         updates = update.model_dump(exclude_unset=True)
         self._settings = self._settings.model_copy(update=updates)
+        self._store.save_settings(self._settings)
         return self._settings
 
     def list_recent_commands(self, limit: int = 20) -> list[CommandRecord]:
@@ -76,9 +90,41 @@ class DaemonState:
     def list_tools(self):
         return self._tool_registry.list_schemas()
 
+    def list_workflows(self) -> list[Workflow]:
+        return self._store.list_workflows()
+
+    def save_workflow(
+        self,
+        name: str,
+        steps: list[WorkflowStep],
+        description: str = "",
+        project_path: Path | None = None,
+        is_global: bool = False,
+    ) -> Workflow:
+        return self._store.save_workflow(
+            name=name,
+            steps=steps,
+            description=description,
+            project_path=project_path,
+            is_global=is_global,
+        )
+
+    def delete_workflow(self, workflow_id: str) -> bool:
+        return self._store.delete_workflow(workflow_id)
+
+    def diagnostics(self) -> list[DiagnosticStatus]:
+        return run_diagnostics(self._settings)
+
+    def storage_stats(self) -> dict[str, int | str]:
+        return self._store.stats()
+
     def accept_text_command(self, request: TextCommandRequest) -> CommandRecord:
         now = datetime.now(UTC)
         command_id = f"cmd_{uuid4().hex}"
+        if request.command_text.strip().lower() == "cancel that":
+            latest_pending = self._latest_pending_command()
+            if latest_pending is not None:
+                return self.cancel_command(latest_pending.id)
         try:
             cwd = self._resolve_cwd(request.cwd)
         except ValueError as exc:
@@ -92,6 +138,7 @@ class DaemonState:
                 error=str(exc),
             )
             self._recent_commands.append(record)
+            self._store.save_command(record)
             return record
 
         try:
@@ -116,6 +163,7 @@ class DaemonState:
             )
 
         self._recent_commands.append(record)
+        self._store.save_command(record)
         return record
 
     def listen_once(self) -> CommandRecord:
@@ -168,6 +216,7 @@ class DaemonState:
                 raw_audio_path.unlink(missing_ok=True)
 
         self._recent_commands.append(record)
+        self._store.save_command(record)
         return record
 
     def confirm_command(self, command_id: str, request: ConfirmationRequest) -> CommandRecord:
@@ -180,7 +229,7 @@ class DaemonState:
             record.safety_decision.expires_at is not None
             and now > record.safety_decision.expires_at
         ):
-            return self._replace_command(
+            updated = self._replace_command(
                 record.model_copy(
                     update={
                         "status": CommandStatus.FAILED,
@@ -188,6 +237,8 @@ class DaemonState:
                     }
                 )
             )
+            self._store.save_command(updated)
+            return updated
 
         if not confirmation_matches(record.safety_decision, request.phrase):
             return record.model_copy(
@@ -216,11 +267,14 @@ class DaemonState:
             confirmed_record = confirmed_record.model_copy(
                 update={"error": "No executable tool actions."}
             )
-        return self._replace_command(confirmed_record)
+        confirmed_record = self._speak_for_record(confirmed_record)
+        updated = self._replace_command(confirmed_record)
+        self._store.save_command(updated)
+        return updated
 
     def cancel_command(self, command_id: str) -> CommandRecord:
         record = self._find_command(command_id)
-        return self._replace_command(
+        updated = self._replace_command(
             record.model_copy(
                 update={
                     "status": CommandStatus.CANCELLED,
@@ -228,8 +282,14 @@ class DaemonState:
                 }
             )
         )
+        updated = self._speak_for_record(updated)
+        self._store.save_command(updated)
+        return updated
 
     def _plan_transcript(self, transcript: str, cwd: Path) -> IntentPlan:
+        direct = direct_plan(transcript)
+        if direct is not None:
+            return direct
         context = PlannerContext(
             cwd=cwd,
             available_tools=self._tool_registry.list_schemas(),
@@ -286,8 +346,8 @@ class DaemonState:
             error=self._error_for_safety_decision(safety_decision, plan),
         )
         if safety_decision.action == SafetyAction.ALLOW and plan.actions:
-            return self._execute_record(record, cwd)
-        return record
+            record = self._execute_record(record, cwd)
+        return self._speak_for_record(record)
 
     def _validate_and_apply_tool_risk(self, plan: IntentPlan) -> IntentPlan:
         highest_risk = plan.risk
@@ -351,6 +411,28 @@ class DaemonState:
             }
         )
 
+    def _speak_for_record(self, record: CommandRecord) -> CommandRecord:
+        text = self._spoken_text(record)
+        speech = self._tts_provider.speak(text, self._settings)
+        return record.model_copy(update={"speech_result": speech})
+
+    @staticmethod
+    def _spoken_text(record: CommandRecord) -> str:
+        if record.status == CommandStatus.AWAITING_CONFIRMATION and record.safety_decision:
+            phrase = record.safety_decision.confirmation_phrase or "confirm action"
+            return f"{record.safety_decision.reason} Say {phrase} to continue."
+        if record.execution_result:
+            return record.execution_result.spoken_summary
+        if record.status == CommandStatus.BLOCKED:
+            return f"Blocked. {record.error or 'The command is not allowed.'}"
+        if record.status == CommandStatus.FAILED:
+            return f"Failed. {record.error or 'The command did not complete.'}"
+        if record.status == CommandStatus.CANCELLED:
+            return "Command cancelled."
+        if record.status == CommandStatus.CONFIRMED:
+            return "Command confirmed."
+        return record.intent_plan.summary if record.intent_plan else "Command recorded."
+
     def _evaluate_safety(self, plan: IntentPlan) -> SafetyDecision:
         return self._safety_policy.evaluate(
             plan,
@@ -378,6 +460,12 @@ class DaemonState:
             if record.id == command_id:
                 return record
         raise CommandNotFoundError(command_id)
+
+    def _latest_pending_command(self) -> CommandRecord | None:
+        for record in self.list_recent_commands(limit=20):
+            if record.status == CommandStatus.AWAITING_CONFIRMATION:
+                return record
+        return None
 
     def _replace_command(self, replacement: CommandRecord) -> CommandRecord:
         for index, record in enumerate(self._recent_commands):

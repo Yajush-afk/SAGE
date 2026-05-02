@@ -10,8 +10,11 @@ from sage.contracts import (
     RuntimeSettingsUpdate,
     ToolCall,
     TranscriptionResult,
+    WorkflowStep,
 )
 from sage.daemon.state import DaemonState
+from sage.memory import InMemoryStore
+from sage.tts import NullTTSProvider
 
 
 class FakeRecorder:
@@ -96,7 +99,24 @@ class UnknownToolPlanner:
 
 
 def make_client(state: DaemonState | None = None) -> TestClient:
-    return TestClient(create_app(state or DaemonState(planner=FakePlanner())))
+    return TestClient(
+        create_app(
+            state
+            or DaemonState(
+                planner=FakePlanner(),
+                store=InMemoryStore(),
+                tts_provider=NullTTSProvider(),
+            )
+        )
+    )
+
+
+def make_state(**kwargs) -> DaemonState:
+    return DaemonState(
+        store=InMemoryStore(),
+        tts_provider=NullTTSProvider(),
+        **kwargs,
+    )
 
 
 def test_health_endpoint():
@@ -144,7 +164,7 @@ def test_text_command_rejects_empty_command():
 
 def test_listen_once_records_transcribes_and_stores_command(tmp_path):
     audio_path = tmp_path / "command.wav"
-    state = DaemonState(
+    state = make_state(
         recorder=FakeRecorder(audio_path),
         stt_provider=FakeSTTProvider(),
         planner=FakePlanner(),
@@ -165,7 +185,7 @@ def test_listen_once_records_transcribes_and_stores_command(tmp_path):
 def test_listen_once_deletes_raw_audio_by_default(tmp_path):
     audio_path = tmp_path / "command.wav"
     client = make_client(
-        DaemonState(
+        make_state(
             recorder=FakeRecorder(audio_path),
             stt_provider=FakeSTTProvider(),
             planner=FakePlanner(),
@@ -182,7 +202,7 @@ def test_listen_once_deletes_raw_audio_by_default(tmp_path):
 def test_listen_once_records_failed_transcription(tmp_path):
     audio_path = tmp_path / "command.wav"
     client = make_client(
-        DaemonState(
+        make_state(
             recorder=FakeRecorder(audio_path),
             stt_provider=FailingSTTProvider(),
             planner=FakePlanner(),
@@ -309,7 +329,7 @@ def test_confirm_unknown_command_returns_404():
 
 def test_read_only_tool_executes_immediately(tmp_path):
     (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n")
-    client = make_client(DaemonState(planner=DetectProjectPlanner()))
+    client = make_client(make_state(planner=DetectProjectPlanner()))
 
     response = client.post(
         "/commands/text",
@@ -323,7 +343,7 @@ def test_read_only_tool_executes_immediately(tmp_path):
 
 
 def test_unknown_tool_is_blocked(tmp_path):
-    client = make_client(DaemonState(planner=UnknownToolPlanner()))
+    client = make_client(make_state(planner=UnknownToolPlanner()))
 
     response = client.post(
         "/commands/text",
@@ -336,7 +356,7 @@ def test_unknown_tool_is_blocked(tmp_path):
 
 
 def test_text_command_rejects_missing_cwd():
-    client = make_client(DaemonState(planner=DetectProjectPlanner()))
+    client = make_client(make_state(planner=DetectProjectPlanner()))
 
     response = client.post(
         "/commands/text",
@@ -350,3 +370,39 @@ def test_text_command_rejects_missing_cwd():
     assert response.status_code == 200
     assert response.json()["status"] == "failed"
     assert "cwd does not exist" in response.json()["error"]
+
+
+def test_workflow_endpoints_save_and_list_workflows():
+    client = make_client()
+
+    created = client.post(
+        "/workflows",
+        json={
+            "name": "inspect",
+            "description": "Inspect current project",
+            "steps": [WorkflowStep(tool_name="detect_project", arguments={}).model_dump()],
+        },
+    )
+    listed = client.get("/workflows")
+
+    assert created.status_code == 200
+    assert listed.status_code == 200
+    assert listed.json()[0]["name"] == "inspect"
+
+
+def test_diagnostics_endpoint_returns_statuses():
+    client = make_client()
+
+    response = client.get("/diagnostics")
+
+    assert response.status_code == 200
+    assert any(item["name"] == "ffmpeg" for item in response.json())
+
+
+def test_storage_endpoint_returns_stats():
+    client = make_client()
+
+    response = client.get("/storage")
+
+    assert response.status_code == 200
+    assert response.json()["path"] == "memory"

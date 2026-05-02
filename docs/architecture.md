@@ -121,8 +121,8 @@ Confirmation and cancellation endpoints:
 - `POST /commands/{command_id}/confirm`
 - `POST /commands/{command_id}/cancel`
 
-Phase 5 still does not execute confirmed commands. A confirmed command is only
-marked `confirmed`; execution starts in the tool/executor phases.
+After Phase 6, confirmed commands with registered tool actions can execute.
+Confirmed commands without executable actions remain recorded but do not run.
 
 ## Phase 6 Typed Tools
 
@@ -145,3 +145,35 @@ Execution rules:
 - unknown tools are blocked
 - tool paths are constrained to the command workspace
 - confirmed commands execute in the original command directory
+
+## Phase 7-10 Voice MVP
+
+The daemon can now speak concise responses through a `TTSProvider`. Piper is the
+default provider, and missing Piper configuration is recorded as a speech failure
+without failing the command itself.
+
+SQLite stores:
+
+- command records
+- runtime settings
+- workflows
+
+Diagnostics expose local dependency status for `ffmpeg`, `rg`, Ollama, Piper,
+audio playback, database path, and Piper voice configuration.
+
+The MVP loop is:
+
+```text
+text or voice
+  -> direct planner for obvious commands or Ollama planner
+  -> safety policy
+  -> typed tools
+  -> command persistence
+  -> optional spoken response
+```
+
+## Phase 11 Control Panel
+
+The Electron control panel under `apps/electron-control-panel` reads from the
+daemon API and shows health, diagnostics, command history, tools, and workflows.
+It does not execute system commands directly.

@@ -9,7 +9,9 @@ from pathlib import Path
 from urllib import error, request
 
 from sage import __version__
+from sage.contracts import RuntimeSettings
 from sage.daemon.server import run as run_daemon
+from sage.observability import run_diagnostics
 
 DEFAULT_DAEMON_URL = "http://127.0.0.1:8765"
 
@@ -61,6 +63,14 @@ def build_parser() -> argparse.ArgumentParser:
     tools_subcommands = tools.add_subparsers(dest="tools_command")
     tools_list = tools_subcommands.add_parser("list", help="List registered tools.")
     tools_list.add_argument("--url", default=DEFAULT_DAEMON_URL, help="Daemon base URL.")
+
+    workflows = subcommands.add_parser("workflows", help="Inspect saved workflows.")
+    workflows_subcommands = workflows.add_subparsers(dest="workflows_command")
+    workflows_list = workflows_subcommands.add_parser("list", help="List saved workflows.")
+    workflows_list.add_argument("--url", default=DEFAULT_DAEMON_URL, help="Daemon base URL.")
+
+    diagnostics = subcommands.add_parser("diagnostics", help="Show daemon diagnostics.")
+    diagnostics.add_argument("--url", default=DEFAULT_DAEMON_URL, help="Daemon base URL.")
 
     return parser
 
@@ -163,8 +173,19 @@ def main(argv: list[str] | None = None) -> int:
             print_json(body)
             return 0 if status < 400 else 1
 
+        if args.command == "workflows" and args.workflows_command == "list":
+            status, body = request_json("GET", daemon_url(args.url, "/workflows"))
+            print_json(body)
+            return 0 if status < 400 else 1
+
+        if args.command == "diagnostics":
+            status, body = request_json("GET", daemon_url(args.url, "/diagnostics"))
+            print_json(body)
+            return 0 if status < 400 else 1
+
         if args.command == "doctor":
-            print("SAGE doctor is implemented in a later phase.")
+            diagnostics = [status.model_dump() for status in run_diagnostics(RuntimeSettings())]
+            print_json(diagnostics)
             return 0
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)

@@ -89,6 +89,14 @@ class ExecutionResult(SageModel):
     latency_ms: int = Field(ge=0)
 
 
+class SpeechResult(SageModel):
+    success: bool
+    provider: str = Field(min_length=1)
+    text: str = Field(min_length=1)
+    audio_path: Path | None = None
+    error: str | None = None
+
+
 class ToolSchema(SageModel):
     name: str = Field(min_length=1)
     description: str = Field(min_length=1)
@@ -156,6 +164,7 @@ class CommandRecord(SageModel):
     intent_plan: IntentPlan | None = None
     safety_decision: SafetyDecision | None = None
     execution_result: ExecutionResult | None = None
+    speech_result: SpeechResult | None = None
     error: str | None = None
 
 
@@ -168,13 +177,17 @@ class RuntimeSettings(SageModel):
     whisper_model_path: Path | None = None
     whisper_timeout_seconds: int = Field(default=120, ge=1, le=600)
     piper_enabled: bool = True
+    piper_binary_path: str = "piper"
     piper_voice_path: Path | None = None
+    audio_player: str = "ffplay"
     default_editor: str = "code"
     max_recording_seconds: int = Field(default=12, ge=1, le=120)
     audio_input: str = "default"
     audio_sample_rate_hz: int = Field(default=16000, ge=8000, le=48000)
     audio_channels: int = Field(default=1, ge=1, le=2)
     audio_cache_dir: Path = Path(".sage/audio")
+    data_dir: Path = Path(".sage")
+    database_path: Path = Path(".sage/sage.db")
     keep_raw_audio: bool = False
     ollama_timeout_seconds: int = Field(default=120, ge=1, le=600)
     ollama_keep_alive: str = "5m"
@@ -193,13 +206,17 @@ class RuntimeSettingsUpdate(SageModel):
     whisper_model_path: Path | None = None
     whisper_timeout_seconds: int | None = Field(default=None, ge=1, le=600)
     piper_enabled: bool | None = None
+    piper_binary_path: str | None = None
     piper_voice_path: Path | None = None
+    audio_player: str | None = None
     default_editor: str | None = None
     max_recording_seconds: int | None = Field(default=None, ge=1, le=120)
     audio_input: str | None = None
     audio_sample_rate_hz: int | None = Field(default=None, ge=8000, le=48000)
     audio_channels: int | None = Field(default=None, ge=1, le=2)
     audio_cache_dir: Path | None = None
+    data_dir: Path | None = None
+    database_path: Path | None = None
     keep_raw_audio: bool | None = None
     ollama_timeout_seconds: int | None = Field(default=None, ge=1, le=600)
     ollama_keep_alive: str | None = None
@@ -254,6 +271,36 @@ class PlannerContext(SageModel):
     recent_commands: list[RecentCommand] = Field(default_factory=list)
 
 
+class WorkflowStep(SageModel):
+    tool_name: str = Field(min_length=1)
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class Workflow(SageModel):
+    id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    description: str = ""
+    project_path: Path | None = None
+    is_global: bool = False
+    steps: list[WorkflowStep] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class WorkflowCreateRequest(SageModel):
+    name: str = Field(min_length=1)
+    description: str = ""
+    project_path: Path | None = None
+    is_global: bool = False
+    steps: list[WorkflowStep] = Field(default_factory=list)
+
+
+class DiagnosticStatus(SageModel):
+    name: str = Field(min_length=1)
+    ok: bool
+    detail: str
+
+
 def export_contract_schemas() -> dict[str, dict[str, Any]]:
     """Return JSON schemas for contracts that are shared with the planner."""
 
@@ -266,6 +313,7 @@ def export_contract_schemas() -> dict[str, dict[str, Any]]:
         "ToolSchema": ToolSchema.model_json_schema(),
         "AudioRecording": AudioRecording.model_json_schema(),
         "TranscriptionResult": TranscriptionResult.model_json_schema(),
+        "SpeechResult": SpeechResult.model_json_schema(),
         "SafetyDecision": SafetyDecision.model_json_schema(),
         "CommandRecord": CommandRecord.model_json_schema(),
         "RuntimeSettings": RuntimeSettings.model_json_schema(),
@@ -274,4 +322,8 @@ def export_contract_schemas() -> dict[str, dict[str, Any]]:
         "ConfirmationRequest": ConfirmationRequest.model_json_schema(),
         "RecentCommand": RecentCommand.model_json_schema(),
         "PlannerContext": PlannerContext.model_json_schema(),
+        "WorkflowStep": WorkflowStep.model_json_schema(),
+        "Workflow": Workflow.model_json_schema(),
+        "WorkflowCreateRequest": WorkflowCreateRequest.model_json_schema(),
+        "DiagnosticStatus": DiagnosticStatus.model_json_schema(),
     }

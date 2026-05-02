@@ -8,11 +8,14 @@ from sage import __version__
 from sage.contracts import (
     CommandRecord,
     ConfirmationRequest,
+    DiagnosticStatus,
     HealthResponse,
     RuntimeSettings,
     RuntimeSettingsUpdate,
     TextCommandRequest,
     ToolSchema,
+    Workflow,
+    WorkflowCreateRequest,
 )
 from sage.daemon.state import CommandNotFoundError, DaemonState, daemon_state
 
@@ -58,6 +61,32 @@ def create_app(state: DaemonState | None = None) -> FastAPI:
     @app.get("/tools", response_model=list[ToolSchema])
     def tools() -> list[ToolSchema]:
         return runtime_state.list_tools()
+
+    @app.get("/workflows", response_model=list[Workflow])
+    def workflows() -> list[Workflow]:
+        return runtime_state.list_workflows()
+
+    @app.post("/workflows", response_model=Workflow)
+    def create_workflow(request: WorkflowCreateRequest) -> Workflow:
+        return runtime_state.save_workflow(
+            name=request.name,
+            steps=request.steps,
+            description=request.description,
+            project_path=request.project_path,
+            is_global=request.is_global,
+        )
+
+    @app.delete("/workflows/{workflow_id}")
+    def delete_workflow(workflow_id: str) -> dict[str, bool]:
+        return {"deleted": runtime_state.delete_workflow(workflow_id)}
+
+    @app.get("/diagnostics", response_model=list[DiagnosticStatus])
+    def diagnostics() -> list[DiagnosticStatus]:
+        return runtime_state.diagnostics()
+
+    @app.get("/storage")
+    def storage() -> dict[str, int | str]:
+        return runtime_state.storage_stats()
 
     @app.get("/settings", response_model=RuntimeSettings)
     def get_settings() -> RuntimeSettings:

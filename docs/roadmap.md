@@ -45,18 +45,46 @@ Status: implemented.
 
 Piper text-to-speech.
 
+Status: implemented.
+
 ## Phase 8
 
 SQLite memory and workflows.
+
+Status: implemented.
 
 ## Phase 9
 
 Observability and command logs.
 
+Status: implemented.
+
 ## Phase 10
 
 MVP acceptance build.
 
+Status: implemented.
+
 ## Phase 11
 
 Electron control panel.
+
+Status: implemented.
+
+## Phase 12
+
+Voice UX improvements.
+
+Status: implemented as direct command helpers and retryable confirmations.
+
+## Phase 13
+
+Project context and local retrieval.
+
+Status: implemented through project summary and ripgrep search tools.
+
+## Phase 14
+
+Packaging and local install.
+
+Status: partially implemented through `sage doctor` and diagnostics endpoints.

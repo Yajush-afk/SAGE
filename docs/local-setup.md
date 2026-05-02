@@ -98,6 +98,31 @@ sage text "run tests"
 The exact tool calls depend on the local model's structured plan. Unknown tools
 are blocked, and tool arguments are validated before execution.
 
+SAGE now also has a direct planner for obvious commands, so these can work even
+before the local LLM is tuned:
+
+```bash
+sage text "what project is this"
+sage text "what is running on port 3000"
+sage text "list processes"
+sage text "run tests"
+```
+
+Run local diagnostics:
+
+```bash
+sage doctor
+sage diagnostics
+```
+
+The Electron control panel lives in `apps/electron-control-panel`:
+
+```bash
+cd apps/electron-control-panel
+npm install
+npm run dev
+```
+
 The first MVP will use a KDE global shortcut that invokes:
 
 ```bash
