@@ -40,7 +40,11 @@ def test_cli_text_posts_to_daemon(monkeypatch, capsys):
         (
             "POST",
             "http://daemon.local/commands/text",
-            {"command_text": "start the frontend", "source": "cli_debug"},
+            {
+                "command_text": "start the frontend",
+                "source": "cli_debug",
+                "cwd": "/home/yajush-afk/my_repo/SAGE",
+            },
         )
     ]
     assert '"transcript": "start the frontend"' in captured.out
@@ -58,3 +62,54 @@ def test_cli_health_returns_error_when_daemon_request_fails(monkeypatch, capsys)
 
     assert exit_code == 1
     assert '"detail": "unavailable"' in captured.out
+
+
+def test_cli_confirm_posts_confirmation_phrase(monkeypatch, capsys):
+    calls = []
+
+    def fake_request_json(method, url, payload=None):
+        calls.append((method, url, payload))
+        return 200, {"status": "confirmed"}
+
+    monkeypatch.setattr("sage.cli.request_json", fake_request_json)
+
+    exit_code = main(
+        [
+            "commands",
+            "confirm",
+            "cmd_123",
+            "confirm start",
+            "--url",
+            "http://daemon.local",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert calls == [
+        (
+            "POST",
+            "http://daemon.local/commands/cmd_123/confirm",
+            {"phrase": "confirm start"},
+        )
+    ]
+    assert '"status": "confirmed"' in captured.out
+
+
+def test_cli_cancel_posts_cancel_request(monkeypatch, capsys):
+    calls = []
+
+    def fake_request_json(method, url, payload=None):
+        calls.append((method, url, payload))
+        return 200, {"status": "cancelled"}
+
+    monkeypatch.setattr("sage.cli.request_json", fake_request_json)
+
+    exit_code = main(["commands", "cancel", "cmd_123", "--url", "http://daemon.local"])
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert calls == [("POST", "http://daemon.local/commands/cmd_123/cancel", None)]
+    assert '"status": "cancelled"' in captured.out

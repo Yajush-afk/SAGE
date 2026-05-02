@@ -57,6 +57,35 @@ ffmpeg -f pulse -i default
 If Whisper.cpp is not running, `sage listen-once` records the failure in command
 history instead of executing anything.
 
+Phase 4 planning requires Ollama to be running with the configured local model:
+
+```bash
+ollama serve
+ollama pull gemma4
+```
+
+Then run:
+
+```bash
+sage text "start the frontend"
+sage commands recent
+```
+
+At this phase SAGE should produce a validated intent plan, but it still will not
+execute tools.
+
+Phase 5 adds safety decisions and confirmations:
+
+```bash
+sage text "start the frontend"
+sage commands recent
+sage commands confirm <command-id> "confirm start"
+sage commands cancel <command-id>
+```
+
+Confirmed commands still do not execute yet. They are only marked confirmed until
+the tool executor exists.
+
 The first MVP will use a KDE global shortcut that invokes:
 
 ```bash

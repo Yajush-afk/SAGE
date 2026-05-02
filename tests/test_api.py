@@ -3,6 +3,9 @@ from fastapi.testclient import TestClient
 from sage.api import create_app
 from sage.contracts import (
     AudioRecording,
+    IntentPlan,
+    PlannerContext,
+    RiskLevel,
     RuntimeSettings,
     RuntimeSettingsUpdate,
     TranscriptionResult,
@@ -40,8 +43,25 @@ class FailingSTTProvider:
         raise OSError("transcription failed")
 
 
+class FakePlanner:
+    def plan(
+        self,
+        transcript: str,
+        context: PlannerContext,
+        settings: RuntimeSettings,
+    ) -> IntentPlan:
+        return IntentPlan(
+            intent="start_dev_server" if "start" in transcript else "inspect_project",
+            confidence=0.9,
+            summary=f"Plan for: {transcript}",
+            actions=[],
+            risk=RiskLevel.STATE_CHANGING if "start" in transcript else RiskLevel.READ_ONLY,
+            requires_confirmation="start" in transcript,
+        )
+
+
 def make_client(state: DaemonState | None = None) -> TestClient:
-    return TestClient(create_app(state or DaemonState()))
+    return TestClient(create_app(state or DaemonState(planner=FakePlanner())))
 
 
 def test_health_endpoint():
@@ -69,8 +89,9 @@ def test_text_command_is_recorded_and_recent_commands_are_newest_first():
 
     assert first.status_code == 200
     assert second.status_code == 200
-    assert second.json()["status"] == "not_implemented"
-    assert second.json()["intent_plan"]["intent"] == "planner_not_implemented"
+    assert second.json()["status"] == "awaiting_confirmation"
+    assert second.json()["intent_plan"]["intent"] == "start_dev_server"
+    assert second.json()["safety_decision"]["confirmation_phrase"] == "confirm start"
     assert recent.status_code == 200
     assert [record["transcript"] for record in recent.json()] == [
         "start the frontend",
@@ -91,6 +112,7 @@ def test_listen_once_records_transcribes_and_stores_command(tmp_path):
     state = DaemonState(
         recorder=FakeRecorder(audio_path),
         stt_provider=FakeSTTProvider(),
+        planner=FakePlanner(),
     )
     state.update_settings(RuntimeSettingsUpdate(keep_raw_audio=True))
     client = make_client(state)
@@ -100,7 +122,7 @@ def test_listen_once_records_transcribes_and_stores_command(tmp_path):
     assert response.status_code == 200
     assert response.json()["transcript"] == "start the frontend"
     assert response.json()["source"] == "push_to_talk"
-    assert response.json()["status"] == "not_implemented"
+    assert response.json()["status"] == "awaiting_confirmation"
     assert response.json()["raw_audio_path"] == str(audio_path)
     assert response.json()["transcription"]["provider"] == "fake_stt"
 
@@ -111,6 +133,7 @@ def test_listen_once_deletes_raw_audio_by_default(tmp_path):
         DaemonState(
             recorder=FakeRecorder(audio_path),
             stt_provider=FakeSTTProvider(),
+            planner=FakePlanner(),
         )
     )
 
@@ -127,6 +150,7 @@ def test_listen_once_records_failed_transcription(tmp_path):
         DaemonState(
             recorder=FakeRecorder(audio_path),
             stt_provider=FailingSTTProvider(),
+            planner=FakePlanner(),
         )
     )
 
@@ -160,6 +184,7 @@ def test_settings_can_be_read_and_updated():
             "whisper_provider": "whisper_cpp_cli",
             "audio_input": "default",
             "keep_raw_audio": True,
+            "ollama_num_ctx": 8192,
         },
     )
 
@@ -171,6 +196,7 @@ def test_settings_can_be_read_and_updated():
     assert updated.json()["max_recording_seconds"] == 10
     assert updated.json()["whisper_provider"] == "whisper_cpp_cli"
     assert updated.json()["keep_raw_audio"] is True
+    assert updated.json()["ollama_num_ctx"] == 8192
 
 
 def test_settings_update_validates_bounds():
@@ -179,3 +205,58 @@ def test_settings_update_validates_bounds():
     response = client.put("/settings", json={"max_recording_seconds": 0})
 
     assert response.status_code == 422
+
+
+def test_confirm_command_accepts_required_phrase():
+    client = make_client()
+    planned = client.post(
+        "/commands/text",
+        json={"command_text": "start the frontend", "source": "api"},
+    )
+
+    confirmed = client.post(
+        f"/commands/{planned.json()['id']}/confirm",
+        json={"phrase": "confirm start"},
+    )
+
+    assert confirmed.status_code == 200
+    assert confirmed.json()["status"] == "confirmed"
+    assert confirmed.json()["error"] == "Executor is not implemented in Phase 5."
+
+
+def test_confirm_command_rejects_wrong_phrase():
+    client = make_client()
+    planned = client.post(
+        "/commands/text",
+        json={"command_text": "start the frontend", "source": "api"},
+    )
+
+    confirmed = client.post(
+        f"/commands/{planned.json()['id']}/confirm",
+        json={"phrase": "yes"},
+    )
+
+    assert confirmed.status_code == 200
+    assert confirmed.json()["status"] == "failed"
+    assert "Confirmation phrase did not match" in confirmed.json()["error"]
+
+
+def test_cancel_command_updates_status():
+    client = make_client()
+    planned = client.post(
+        "/commands/text",
+        json={"command_text": "start the frontend", "source": "api"},
+    )
+
+    cancelled = client.post(f"/commands/{planned.json()['id']}/cancel")
+
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "cancelled"
+
+
+def test_confirm_unknown_command_returns_404():
+    client = make_client()
+
+    response = client.post("/commands/missing/confirm", json={"phrase": "confirm start"})
+
+    assert response.status_code == 404

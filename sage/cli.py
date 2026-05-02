@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 from urllib import error, request
 
 from sage import __version__
@@ -48,6 +49,13 @@ def build_parser() -> argparse.ArgumentParser:
     recent = commands_subcommands.add_parser("recent", help="List recent commands.")
     recent.add_argument("--url", default=DEFAULT_DAEMON_URL, help="Daemon base URL.")
     recent.add_argument("--limit", default=20, type=int, help="Number of commands to show.")
+    confirm = commands_subcommands.add_parser("confirm", help="Confirm a pending command.")
+    confirm.add_argument("command_id", help="Command id to confirm.")
+    confirm.add_argument("phrase", help="Required confirmation phrase.")
+    confirm.add_argument("--url", default=DEFAULT_DAEMON_URL, help="Daemon base URL.")
+    cancel = commands_subcommands.add_parser("cancel", help="Cancel a command.")
+    cancel.add_argument("command_id", help="Command id to cancel.")
+    cancel.add_argument("--url", default=DEFAULT_DAEMON_URL, help="Daemon base URL.")
 
     tools = subcommands.add_parser("tools", help="Inspect registered tools.")
     tools_subcommands = tools.add_subparsers(dest="tools_command")
@@ -111,7 +119,11 @@ def main(argv: list[str] | None = None) -> int:
             status, body = request_json(
                 "POST",
                 daemon_url(args.url, "/commands/text"),
-                {"command_text": args.command_text, "source": "cli_debug"},
+                {
+                    "command_text": args.command_text,
+                    "source": "cli_debug",
+                    "cwd": str(Path.cwd()),
+                },
             )
             print_json(body)
             return 0 if status < 400 else 1
@@ -125,6 +137,23 @@ def main(argv: list[str] | None = None) -> int:
             status, body = request_json(
                 "GET",
                 daemon_url(args.url, f"/commands/recent?limit={args.limit}"),
+            )
+            print_json(body)
+            return 0 if status < 400 else 1
+
+        if args.command == "commands" and args.commands_command == "confirm":
+            status, body = request_json(
+                "POST",
+                daemon_url(args.url, f"/commands/{args.command_id}/confirm"),
+                {"phrase": args.phrase},
+            )
+            print_json(body)
+            return 0 if status < 400 else 1
+
+        if args.command == "commands" and args.commands_command == "cancel":
+            status, body = request_json(
+                "POST",
+                daemon_url(args.url, f"/commands/{args.command_id}/cancel"),
             )
             print_json(body)
             return 0 if status < 400 else 1

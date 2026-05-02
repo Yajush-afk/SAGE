@@ -21,3 +21,22 @@ MVP defaults:
 - destructive actions are blocked or require explicit confirmation
 - privileged actions are blocked
 - arbitrary shell execution is blocked
+
+Implemented Phase 5 behavior:
+
+- read-only and safe plans are allowed
+- state-changing plans wait for exact confirmation
+- destructive and privileged plans are blocked
+- dangerous intent/tool names such as `sudo`, `git_reset`, `git_clean`, and
+  `rm_rf` are blocked
+- confirmations expire according to `confirmation_timeout_seconds`
+- plain `yes` is not accepted as confirmation
+
+Example confirmation phrases:
+
+- `confirm start`
+- `confirm stop`
+- `confirm restart`
+- `confirm kill`
+- `confirm install`
+- `confirm save`

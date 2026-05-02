@@ -27,9 +27,13 @@ Status: implemented.
 
 Ollama/Gemma 4 planner.
 
+Status: implemented.
+
 ## Phase 5
 
 Deterministic safety engine.
+
+Status: implemented.
 
 ## Phase 6
 

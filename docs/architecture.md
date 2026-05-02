@@ -72,3 +72,54 @@ The default STT path targets a Whisper.cpp/OpenAI-compatible HTTP endpoint at
 
 Raw audio is deleted by default after transcription. Set `keep_raw_audio` to
 `true` only for debugging.
+
+## Phase 4 Intent Planning
+
+Text commands and transcribed voice commands now pass through an Ollama-backed
+planner.
+
+```text
+transcript
+  -> planner context
+  -> Ollama /api/chat
+  -> IntentPlan JSON
+  -> strict Pydantic validation
+  -> command history
+```
+
+The planner uses the `IntentPlan` JSON schema and retries once with a repair
+prompt if the model returns invalid JSON.
+
+Phase 4 still does not execute actions. If a plan is valid, the command status is
+`planned`; if Ollama is unavailable or the model output cannot be validated, the
+command status is `failed`.
+
+## Phase 5 Safety
+
+Every valid `IntentPlan` now passes through a deterministic safety policy before
+anything can be executed in later phases.
+
+```text
+IntentPlan
+  -> SafetyPolicy
+  -> SafetyDecision
+  -> command status
+```
+
+Safety outcomes:
+
+- `allow`: command stays `planned`
+- `require_confirmation`: command becomes `awaiting_confirmation`
+- `block`: command becomes `blocked`
+
+Destructive, privileged, credential-related, and explicitly blocked patterns are
+blocked in this phase. State-changing commands require exact confirmation phrases
+such as `confirm start`, `confirm stop`, or `confirm kill`.
+
+Confirmation and cancellation endpoints:
+
+- `POST /commands/{command_id}/confirm`
+- `POST /commands/{command_id}/cancel`
+
+Phase 5 still does not execute confirmed commands. A confirmed command is only
+marked `confirmed`; execution starts in the tool/executor phases.

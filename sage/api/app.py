@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 
 from sage import __version__
 from sage.contracts import (
     CommandRecord,
+    ConfirmationRequest,
     HealthResponse,
     RuntimeSettings,
     RuntimeSettingsUpdate,
     TextCommandRequest,
     ToolSchema,
 )
-from sage.daemon.state import DaemonState, daemon_state
+from sage.daemon.state import CommandNotFoundError, DaemonState, daemon_state
 
 
 def create_app(state: DaemonState | None = None) -> FastAPI:
@@ -39,6 +40,20 @@ def create_app(state: DaemonState | None = None) -> FastAPI:
     @app.get("/commands/recent", response_model=list[CommandRecord])
     def recent_commands(limit: int = Query(default=20, ge=1, le=100)) -> list[CommandRecord]:
         return runtime_state.list_recent_commands(limit=limit)
+
+    @app.post("/commands/{command_id}/confirm", response_model=CommandRecord)
+    def confirm_command(command_id: str, request: ConfirmationRequest) -> CommandRecord:
+        try:
+            return runtime_state.confirm_command(command_id, request)
+        except CommandNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Command not found.") from exc
+
+    @app.post("/commands/{command_id}/cancel", response_model=CommandRecord)
+    def cancel_command(command_id: str) -> CommandRecord:
+        try:
+            return runtime_state.cancel_command(command_id)
+        except CommandNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Command not found.") from exc
 
     @app.get("/tools", response_model=list[ToolSchema])
     def tools() -> list[ToolSchema]:

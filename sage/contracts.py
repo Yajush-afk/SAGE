@@ -120,9 +120,28 @@ class TranscriptionResult(SageModel):
 
 class CommandStatus(StrEnum):
     ACCEPTED = "accepted"
+    PLANNED = "planned"
+    AWAITING_CONFIRMATION = "awaiting_confirmation"
+    CONFIRMED = "confirmed"
+    CANCELLED = "cancelled"
+    BLOCKED = "blocked"
     COMPLETED = "completed"
     FAILED = "failed"
     NOT_IMPLEMENTED = "not_implemented"
+
+
+class SafetyAction(StrEnum):
+    ALLOW = "allow"
+    REQUIRE_CONFIRMATION = "require_confirmation"
+    BLOCK = "block"
+
+
+class SafetyDecision(SageModel):
+    action: SafetyAction
+    risk: RiskLevel
+    reason: str = Field(min_length=1)
+    confirmation_phrase: str | None = None
+    expires_at: datetime | None = None
 
 
 class CommandRecord(SageModel):
@@ -134,6 +153,7 @@ class CommandRecord(SageModel):
     raw_audio_path: Path | None = None
     transcription: TranscriptionResult | None = None
     intent_plan: IntentPlan | None = None
+    safety_decision: SafetyDecision | None = None
     execution_result: ExecutionResult | None = None
     error: str | None = None
 
@@ -154,6 +174,10 @@ class RuntimeSettings(SageModel):
     audio_channels: int = Field(default=1, ge=1, le=2)
     audio_cache_dir: Path = Path(".sage/audio")
     keep_raw_audio: bool = False
+    ollama_timeout_seconds: int = Field(default=120, ge=1, le=600)
+    ollama_keep_alive: str = "5m"
+    ollama_num_ctx: int = Field(default=4096, ge=512, le=262144)
+    planner_repair_attempts: int = Field(default=1, ge=0, le=3)
     confirmation_timeout_seconds: int = Field(default=30, ge=5, le=300)
 
 
@@ -173,6 +197,10 @@ class RuntimeSettingsUpdate(SageModel):
     audio_channels: int | None = Field(default=None, ge=1, le=2)
     audio_cache_dir: Path | None = None
     keep_raw_audio: bool | None = None
+    ollama_timeout_seconds: int | None = Field(default=None, ge=1, le=600)
+    ollama_keep_alive: str | None = None
+    ollama_num_ctx: int | None = Field(default=None, ge=512, le=262144)
+    planner_repair_attempts: int | None = Field(default=None, ge=0, le=3)
     confirmation_timeout_seconds: int | None = Field(default=None, ge=5, le=300)
 
 
@@ -185,6 +213,7 @@ class HealthResponse(SageModel):
 class TextCommandRequest(SageModel):
     command_text: str = Field(min_length=1)
     source: Literal["cli_debug", "api"] = "api"
+    cwd: Path | None = None
 
     @field_validator("command_text")
     @classmethod
@@ -193,6 +222,31 @@ class TextCommandRequest(SageModel):
         if not normalized:
             raise ValueError("command_text must contain non-whitespace text")
         return normalized
+
+
+class ConfirmationRequest(SageModel):
+    phrase: str = Field(min_length=1)
+
+    @field_validator("phrase")
+    @classmethod
+    def phrase_must_have_text(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not normalized:
+            raise ValueError("phrase must contain non-whitespace text")
+        return normalized
+
+
+class RecentCommand(SageModel):
+    transcript: str = Field(min_length=1)
+    status: CommandStatus
+    intent: str | None = None
+
+
+class PlannerContext(SageModel):
+    cwd: Path
+    available_tools: list[ToolSchema] = Field(default_factory=list)
+    safety_rules_summary: str
+    recent_commands: list[RecentCommand] = Field(default_factory=list)
 
 
 def export_contract_schemas() -> dict[str, dict[str, Any]]:
@@ -207,8 +261,12 @@ def export_contract_schemas() -> dict[str, dict[str, Any]]:
         "ToolSchema": ToolSchema.model_json_schema(),
         "AudioRecording": AudioRecording.model_json_schema(),
         "TranscriptionResult": TranscriptionResult.model_json_schema(),
+        "SafetyDecision": SafetyDecision.model_json_schema(),
         "CommandRecord": CommandRecord.model_json_schema(),
         "RuntimeSettings": RuntimeSettings.model_json_schema(),
         "HealthResponse": HealthResponse.model_json_schema(),
         "TextCommandRequest": TextCommandRequest.model_json_schema(),
+        "ConfirmationRequest": ConfirmationRequest.model_json_schema(),
+        "RecentCommand": RecentCommand.model_json_schema(),
+        "PlannerContext": PlannerContext.model_json_schema(),
     }
