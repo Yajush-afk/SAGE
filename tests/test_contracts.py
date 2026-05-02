@@ -7,8 +7,10 @@ from sage.contracts import (
     ExecutionResult,
     IntentPlan,
     RiskLevel,
+    RuntimeSettings,
     ToolCall,
     ToolResult,
+    TranscriptionResult,
     VoiceCommand,
     export_contract_schemas,
 )
@@ -119,4 +121,25 @@ def test_schema_export_includes_planner_contracts():
 
     assert "IntentPlan" in schemas
     assert "ToolCall" in schemas
+    assert "TranscriptionResult" in schemas
     assert schemas["IntentPlan"]["additionalProperties"] is False
+
+
+def test_transcription_result_rejects_empty_text():
+    with pytest.raises(ValidationError):
+        TranscriptionResult(text="   ", confidence=None, duration_ms=1, provider="test")
+
+
+def test_runtime_settings_accepts_audio_and_stt_settings():
+    settings = RuntimeSettings(
+        whisper_provider="whisper_cpp_cli",
+        whisper_cli_path="whisper-cli",
+        max_recording_seconds=5,
+        audio_sample_rate_hz=16000,
+        audio_channels=1,
+        keep_raw_audio=True,
+    )
+
+    assert settings.whisper_provider == "whisper_cpp_cli"
+    assert settings.max_recording_seconds == 5
+    assert settings.keep_raw_audio is True

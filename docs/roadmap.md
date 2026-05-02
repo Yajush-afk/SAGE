@@ -21,6 +21,8 @@ Status: implemented.
 
 Whisper.cpp speech-to-text.
 
+Status: implemented.
+
 ## Phase 4
 
 Ollama/Gemma 4 planner.

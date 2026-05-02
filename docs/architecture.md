@@ -55,3 +55,20 @@ Initial endpoints:
 
 Phase 2 intentionally keeps command history in memory. SQLite persistence is
 introduced later with memory and observability.
+
+## Phase 3 Voice Input
+
+`POST /commands/listen-once` now runs the voice input boundary:
+
+```text
+record WAV with ffmpeg
+  -> transcribe with Whisper.cpp provider
+  -> store transcript in recent command history
+  -> stop before planning/execution
+```
+
+The default STT path targets a Whisper.cpp/OpenAI-compatible HTTP endpoint at
+`http://127.0.0.1:2022/v1/audio/transcriptions`.
+
+Raw audio is deleted by default after transcription. Set `keep_raw_audio` to
+`true` only for debugging.

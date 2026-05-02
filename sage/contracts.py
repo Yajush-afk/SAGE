@@ -96,6 +96,28 @@ class ToolSchema(SageModel):
     parameters_schema: dict[str, Any]
 
 
+class AudioRecording(SageModel):
+    path: Path
+    duration_ms: int = Field(ge=0)
+    sample_rate_hz: int = Field(ge=8000)
+    channels: int = Field(ge=1, le=2)
+
+
+class TranscriptionResult(SageModel):
+    text: str = Field(min_length=1)
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    duration_ms: int = Field(ge=0)
+    provider: str = Field(min_length=1)
+
+    @field_validator("text")
+    @classmethod
+    def text_must_have_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("text must contain non-whitespace text")
+        return normalized
+
+
 class CommandStatus(StrEnum):
     ACCEPTED = "accepted"
     COMPLETED = "completed"
@@ -109,6 +131,8 @@ class CommandRecord(SageModel):
     transcript: str = Field(min_length=1)
     source: Literal["push_to_talk", "cli_debug", "api"]
     status: CommandStatus
+    raw_audio_path: Path | None = None
+    transcription: TranscriptionResult | None = None
     intent_plan: IntentPlan | None = None
     execution_result: ExecutionResult | None = None
     error: str | None = None
@@ -119,10 +143,17 @@ class RuntimeSettings(SageModel):
     model_name: str = "gemma4"
     whisper_provider: str = "whisper_cpp"
     whisper_endpoint: str = "http://127.0.0.1:2022/v1"
+    whisper_cli_path: str = "whisper-cli"
+    whisper_model_path: Path | None = None
     piper_enabled: bool = True
     piper_voice_path: Path | None = None
     default_editor: str = "code"
     max_recording_seconds: int = Field(default=12, ge=1, le=120)
+    audio_input: str = "default"
+    audio_sample_rate_hz: int = Field(default=16000, ge=8000, le=48000)
+    audio_channels: int = Field(default=1, ge=1, le=2)
+    audio_cache_dir: Path = Path(".sage/audio")
+    keep_raw_audio: bool = False
     confirmation_timeout_seconds: int = Field(default=30, ge=5, le=300)
 
 
@@ -131,10 +162,17 @@ class RuntimeSettingsUpdate(SageModel):
     model_name: str | None = None
     whisper_provider: str | None = None
     whisper_endpoint: str | None = None
+    whisper_cli_path: str | None = None
+    whisper_model_path: Path | None = None
     piper_enabled: bool | None = None
     piper_voice_path: Path | None = None
     default_editor: str | None = None
     max_recording_seconds: int | None = Field(default=None, ge=1, le=120)
+    audio_input: str | None = None
+    audio_sample_rate_hz: int | None = Field(default=None, ge=8000, le=48000)
+    audio_channels: int | None = Field(default=None, ge=1, le=2)
+    audio_cache_dir: Path | None = None
+    keep_raw_audio: bool | None = None
     confirmation_timeout_seconds: int | None = Field(default=None, ge=5, le=300)
 
 
@@ -167,6 +205,8 @@ def export_contract_schemas() -> dict[str, dict[str, Any]]:
         "ToolResult": ToolResult.model_json_schema(),
         "ExecutionResult": ExecutionResult.model_json_schema(),
         "ToolSchema": ToolSchema.model_json_schema(),
+        "AudioRecording": AudioRecording.model_json_schema(),
+        "TranscriptionResult": TranscriptionResult.model_json_schema(),
         "CommandRecord": CommandRecord.model_json_schema(),
         "RuntimeSettings": RuntimeSettings.model_json_schema(),
         "HealthResponse": HealthResponse.model_json_schema(),

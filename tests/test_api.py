@@ -1,11 +1,47 @@
 from fastapi.testclient import TestClient
 
 from sage.api import create_app
+from sage.contracts import (
+    AudioRecording,
+    RuntimeSettings,
+    RuntimeSettingsUpdate,
+    TranscriptionResult,
+)
 from sage.daemon.state import DaemonState
 
 
-def make_client() -> TestClient:
-    return TestClient(create_app(DaemonState()))
+class FakeRecorder:
+    def __init__(self, audio_path):
+        self.audio_path = audio_path
+
+    def record_once(self, settings: RuntimeSettings) -> AudioRecording:
+        self.audio_path.write_bytes(b"audio")
+        return AudioRecording(
+            path=self.audio_path,
+            duration_ms=25,
+            sample_rate_hz=settings.audio_sample_rate_hz,
+            channels=settings.audio_channels,
+        )
+
+
+class FakeSTTProvider:
+    def transcribe(self, audio_path, settings: RuntimeSettings) -> TranscriptionResult:
+        assert audio_path.exists()
+        return TranscriptionResult(
+            text="start the frontend",
+            confidence=None,
+            duration_ms=10,
+            provider="fake_stt",
+        )
+
+
+class FailingSTTProvider:
+    def transcribe(self, audio_path, settings: RuntimeSettings) -> TranscriptionResult:
+        raise OSError("transcription failed")
+
+
+def make_client(state: DaemonState | None = None) -> TestClient:
+    return TestClient(create_app(state or DaemonState()))
 
 
 def test_health_endpoint():
@@ -50,13 +86,56 @@ def test_text_command_rejects_empty_command():
     assert response.status_code == 422
 
 
-def test_listen_once_endpoint_exists_but_is_not_implemented():
-    client = make_client()
+def test_listen_once_records_transcribes_and_stores_command(tmp_path):
+    audio_path = tmp_path / "command.wav"
+    state = DaemonState(
+        recorder=FakeRecorder(audio_path),
+        stt_provider=FakeSTTProvider(),
+    )
+    state.update_settings(RuntimeSettingsUpdate(keep_raw_audio=True))
+    client = make_client(state)
 
     response = client.post("/commands/listen-once")
 
-    assert response.status_code == 501
-    assert response.json()["detail"] == "Voice capture and STT are implemented in Phase 3."
+    assert response.status_code == 200
+    assert response.json()["transcript"] == "start the frontend"
+    assert response.json()["source"] == "push_to_talk"
+    assert response.json()["status"] == "not_implemented"
+    assert response.json()["raw_audio_path"] == str(audio_path)
+    assert response.json()["transcription"]["provider"] == "fake_stt"
+
+
+def test_listen_once_deletes_raw_audio_by_default(tmp_path):
+    audio_path = tmp_path / "command.wav"
+    client = make_client(
+        DaemonState(
+            recorder=FakeRecorder(audio_path),
+            stt_provider=FakeSTTProvider(),
+        )
+    )
+
+    response = client.post("/commands/listen-once")
+
+    assert response.status_code == 200
+    assert response.json()["raw_audio_path"] is None
+    assert not audio_path.exists()
+
+
+def test_listen_once_records_failed_transcription(tmp_path):
+    audio_path = tmp_path / "command.wav"
+    client = make_client(
+        DaemonState(
+            recorder=FakeRecorder(audio_path),
+            stt_provider=FailingSTTProvider(),
+        )
+    )
+
+    response = client.post("/commands/listen-once")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    assert response.json()["transcript"] == "[voice command unavailable]"
+    assert response.json()["error"] == "transcription failed"
 
 
 def test_tools_endpoint_returns_empty_registry_for_phase_2():
@@ -78,6 +157,9 @@ def test_settings_can_be_read_and_updated():
             "model_name": "gemma4:latest",
             "piper_enabled": False,
             "max_recording_seconds": 10,
+            "whisper_provider": "whisper_cpp_cli",
+            "audio_input": "default",
+            "keep_raw_audio": True,
         },
     )
 
@@ -87,6 +169,8 @@ def test_settings_can_be_read_and_updated():
     assert updated.json()["model_name"] == "gemma4:latest"
     assert updated.json()["piper_enabled"] is False
     assert updated.json()["max_recording_seconds"] == 10
+    assert updated.json()["whisper_provider"] == "whisper_cpp_cli"
+    assert updated.json()["keep_raw_audio"] is True
 
 
 def test_settings_update_validates_bounds():

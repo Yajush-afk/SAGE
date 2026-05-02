@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Query
 
 from sage import __version__
 from sage.contracts import (
@@ -34,10 +34,7 @@ def create_app(state: DaemonState | None = None) -> FastAPI:
 
     @app.post("/commands/listen-once", response_model=CommandRecord)
     def command_listen_once() -> CommandRecord:
-        raise HTTPException(
-            status_code=501,
-            detail="Voice capture and STT are implemented in Phase 3.",
-        )
+        return runtime_state.listen_once()
 
     @app.get("/commands/recent", response_model=list[CommandRecord])
     def recent_commands(limit: int = Query(default=20, ge=1, le=100)) -> list[CommandRecord]:

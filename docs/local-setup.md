@@ -41,6 +41,22 @@ sage commands recent
 sage tools list
 ```
 
+Phase 3 voice input requires a local Whisper.cpp-compatible transcription
+endpoint before `sage listen-once` can produce transcripts. SAGE defaults to:
+
+```text
+http://127.0.0.1:2022/v1/audio/transcriptions
+```
+
+The recorder uses `ffmpeg` against the default PulseAudio/PipeWire input:
+
+```text
+ffmpeg -f pulse -i default
+```
+
+If Whisper.cpp is not running, `sage listen-once` records the failure in command
+history instead of executing anything.
+
 The first MVP will use a KDE global shortcut that invokes:
 
 ```bash
