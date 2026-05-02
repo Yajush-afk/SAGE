@@ -9,28 +9,8 @@ import {
   ShieldCheck,
   Wrench
 } from "lucide-react";
+import { Command, Diagnostic, Health, StorageStats, Tool, Workflow, loadSnapshot } from "./api";
 import "./styles.css";
-
-type Health = { status: string; version: string; service: string };
-type Command = {
-  id: string;
-  transcript: string;
-  status: string;
-  created_at: string;
-  error?: string | null;
-  intent_plan?: { intent: string; summary: string; risk: string } | null;
-};
-type Diagnostic = { name: string; ok: boolean; detail: string };
-type Tool = { name: string; description: string; risk: string };
-type Workflow = { id: string; name: string; description: string; steps: unknown[] };
-
-const API = "http://127.0.0.1:8765";
-
-async function fetchJson<T>(path: string): Promise<T> {
-  const response = await fetch(`${API}${path}`);
-  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-  return response.json() as Promise<T>;
-}
 
 function App() {
   const [health, setHealth] = useState<Health | null>(null);
@@ -38,28 +18,23 @@ function App() {
   const [diagnostics, setDiagnostics] = useState<Diagnostic[]>([]);
   const [tools, setTools] = useState<Tool[]>([]);
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [storage, setStorage] = useState<StorageStats | null>(null);
+  const [errors, setErrors] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
 
   async function refresh() {
     setLoading(true);
-    setError(null);
     try {
-      const [healthData, commandData, diagnosticData, toolData, workflowData] =
-        await Promise.all([
-          fetchJson<Health>("/health"),
-          fetchJson<Command[]>("/commands/recent?limit=12"),
-          fetchJson<Diagnostic[]>("/diagnostics"),
-          fetchJson<Tool[]>("/tools"),
-          fetchJson<Workflow[]>("/workflows")
-        ]);
-      setHealth(healthData);
-      setCommands(commandData);
-      setDiagnostics(diagnosticData);
-      setTools(toolData);
-      setWorkflows(workflowData);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not reach SAGE daemon");
+      const snapshot = await loadSnapshot();
+      setHealth(snapshot.health);
+      setCommands(snapshot.commands);
+      setDiagnostics(snapshot.diagnostics);
+      setTools(snapshot.tools);
+      setWorkflows(snapshot.workflows);
+      setStorage(snapshot.storage);
+      setErrors(snapshot.errors);
+    } catch (error) {
+      setErrors([error instanceof Error ? error.message : "Unexpected control panel error"]);
     } finally {
       setLoading(false);
     }
@@ -109,13 +84,21 @@ function App() {
           </button>
         </header>
 
-        {error && <div className="error">Daemon unavailable: {error}</div>}
+        {errors.length > 0 && (
+          <div className="error">
+            <strong>Partial daemon data</strong>
+            {errors.slice(0, 3).map((message) => (
+              <span key={message}>{message}</span>
+            ))}
+          </div>
+        )}
 
         <section className="metrics">
           <Metric label="Daemon" value={health?.status ?? "offline"} tone={health ? "good" : "bad"} />
           <Metric label="Diagnostics" value={`${okDiagnostics}/${diagnostics.length || 0}`} />
           <Metric label="Commands" value={String(commands.length)} />
           <Metric label="Success" value={successRate} />
+          <Metric label="Storage" value={storage ? formatBytes(storage.size_bytes) : "n/a"} />
         </section>
 
         <section className="grid">
@@ -127,7 +110,7 @@ function App() {
                   <span className={`status ${command.status}`}>{command.status}</span>
                   <div>
                     <strong>{command.transcript}</strong>
-                    <small>{command.intent_plan?.summary ?? command.error ?? command.id}</small>
+                    <small>{commandSummary(command)}</small>
                   </div>
                 </div>
               ))}
@@ -198,6 +181,20 @@ function Panel({ title, icon, children }: { title: string; icon: React.ReactNode
 
 function Empty({ text }: { text: string }) {
   return <div className="empty">{text}</div>;
+}
+
+function commandSummary(command: Command): string {
+  if (command.execution_result) return command.execution_result.spoken_summary;
+  if (command.safety_decision?.confirmation_phrase) {
+    return `${command.safety_decision.reason} Phrase: ${command.safety_decision.confirmation_phrase}`;
+  }
+  return command.intent_plan?.summary ?? command.error ?? command.id;
+}
+
+function formatBytes(size: number): string {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 createRoot(document.getElementById("root")!).render(<App />);

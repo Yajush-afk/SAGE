@@ -113,3 +113,22 @@ def test_cli_cancel_posts_cancel_request(monkeypatch, capsys):
     assert exit_code == 0
     assert calls == [("POST", "http://daemon.local/commands/cmd_123/cancel", None)]
     assert '"status": "cancelled"' in captured.out
+
+
+def test_cli_doctor_returns_failure_when_required_check_fails(monkeypatch, capsys):
+    class Diagnostic:
+        def __init__(self, ok, required):
+            self.ok = ok
+            self.required = required
+
+        def model_dump(self):
+            return {"name": "ollama", "ok": self.ok, "required": self.required, "detail": "missing"}
+
+    monkeypatch.setattr("sage.cli.run_diagnostics", lambda settings: [Diagnostic(False, True)])
+
+    exit_code = main(["doctor"])
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert '"required": true' in captured.out

@@ -186,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "doctor":
             diagnostics = [status.model_dump() for status in run_diagnostics(RuntimeSettings())]
             print_json(diagnostics)
-            return 0
+            return 0 if all(item["ok"] or not item["required"] for item in diagnostics) else 1
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return 1

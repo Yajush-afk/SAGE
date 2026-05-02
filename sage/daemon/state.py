@@ -77,8 +77,14 @@ class DaemonState:
         return self._settings
 
     def update_settings(self, update: RuntimeSettingsUpdate) -> RuntimeSettings:
+        old_database_path = self._settings.database_path
         updates = update.model_dump(exclude_unset=True)
         self._settings = self._settings.model_copy(update=updates)
+        if (
+            self._settings.database_path != old_database_path
+            and isinstance(self._store, SQLiteStore)
+        ):
+            self._store = SQLiteStore(self._settings.database_path)
         self._store.save_settings(self._settings)
         return self._settings
 

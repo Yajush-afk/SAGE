@@ -299,6 +299,7 @@ class DiagnosticStatus(SageModel):
     name: str = Field(min_length=1)
     ok: bool
     detail: str
+    required: bool = True
 
 
 def export_contract_schemas() -> dict[str, dict[str, Any]]:

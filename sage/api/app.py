@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 
 from sage import __version__
 from sage.contracts import (
@@ -26,6 +27,15 @@ def create_app(state: DaemonState | None = None) -> FastAPI:
         title="SAGE Daemon API",
         version=__version__,
         description="Local API for the SAGE voice command daemon.",
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://127.0.0.1:5174",
+            "http://localhost:5174",
+        ],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["*"],
     )
 
     @app.get("/health", response_model=HealthResponse)

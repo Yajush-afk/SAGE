@@ -1,4 +1,4 @@
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, shell } = require("electron");
 const path = require("path");
 
 function createWindow() {
@@ -10,7 +10,23 @@ function createWindow() {
     title: "SAGE Control",
     webPreferences: {
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      sandbox: true
+    }
+  });
+
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith("https://") || url.startsWith("http://")) {
+      shell.openExternal(url);
+    }
+    return { action: "deny" };
+  });
+
+  window.webContents.on("will-navigate", (event, url) => {
+    const allowedDevUrl = process.env.VITE_DEV_SERVER_URL;
+    const productionUrl = `file://${path.join(__dirname, "dist", "index.html")}`;
+    if (url !== allowedDevUrl && url !== productionUrl) {
+      event.preventDefault();
     }
   });
 

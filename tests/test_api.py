@@ -129,6 +129,21 @@ def test_health_endpoint():
     assert response.json()["service"] == "sage-daemon"
 
 
+def test_cors_allows_control_panel_origin():
+    client = make_client()
+
+    response = client.options(
+        "/health",
+        headers={
+            "Origin": "http://127.0.0.1:5174",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:5174"
+
+
 def test_text_command_is_recorded_and_recent_commands_are_newest_first():
     client = make_client()
 

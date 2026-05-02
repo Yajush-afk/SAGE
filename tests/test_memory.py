@@ -26,3 +26,18 @@ def test_sqlite_store_persists_commands_settings_and_workflows(tmp_path):
     assert store.list_workflows()[0].name == "inspect"
     assert store.delete_workflow(workflow.id) is True
     assert store.stats()["command_count"] == 1
+
+
+def test_sqlite_store_can_move_database_path_through_daemon_settings(tmp_path):
+    from sage.contracts import RuntimeSettingsUpdate
+    from sage.daemon.state import DaemonState
+    from sage.tts import NullTTSProvider
+
+    initial = SQLiteStore(tmp_path / "initial.db")
+    new_path = tmp_path / "nested" / "sage.db"
+    state = DaemonState(store=initial, tts_provider=NullTTSProvider())
+
+    settings = state.update_settings(RuntimeSettingsUpdate(database_path=new_path))
+
+    assert settings.database_path == new_path
+    assert new_path.exists()
