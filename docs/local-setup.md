@@ -5,7 +5,7 @@ SAGE is designed to run without paid APIs.
 Target development environment:
 
 - Fedora KDE Wayland
-- Conda-managed Python 3.12
+- Repo-local Python `.venv`
 - ffmpeg
 - Whisper.cpp
 - Ollama with Gemma 4
@@ -14,35 +14,37 @@ Target development environment:
 Create the Python environment:
 
 ```bash
-conda env create -f environment.yml
-conda activate sage
+python3 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip setuptools wheel
+.venv/bin/python -m pip install -e ".[dev]"
 ```
 
 Verify the scaffold:
 
 ```bash
-sage --help
-pytest
-ruff check .
+.venv/bin/sage --help
+.venv/bin/pytest
+.venv/bin/ruff check .
 ```
 
 Start the Phase 2 local daemon:
 
 ```bash
-sage daemon start
+.venv/bin/sage daemon start
 ```
 
 In another shell:
 
 ```bash
-sage daemon health
-sage text "start the frontend"
-sage commands recent
-sage tools list
+.venv/bin/sage daemon health
+.venv/bin/sage text "start the frontend"
+.venv/bin/sage commands recent
+.venv/bin/sage tools list
 ```
 
 Phase 3 voice input requires a local Whisper.cpp-compatible transcription
-endpoint before `sage listen-once` can produce transcripts. SAGE defaults to:
+endpoint before `.venv/bin/sage listen-once` can produce transcripts. SAGE
+defaults to:
 
 ```text
 http://127.0.0.1:2022/v1/audio/transcriptions
@@ -54,8 +56,8 @@ The recorder uses `ffmpeg` against the default PulseAudio/PipeWire input:
 ffmpeg -f pulse -i default
 ```
 
-If Whisper.cpp is not running, `sage listen-once` records the failure in command
-history instead of executing anything.
+If Whisper.cpp is not running, `.venv/bin/sage listen-once` records the failure
+in command history instead of executing anything.
 
 Phase 4 planning requires Ollama to be running with the configured local model:
 
@@ -67,8 +69,8 @@ ollama pull gemma4
 Then run:
 
 ```bash
-sage text "start the frontend"
-sage commands recent
+.venv/bin/sage text "start the frontend"
+.venv/bin/sage commands recent
 ```
 
 At this phase SAGE should produce a validated intent plan, but it still will not
@@ -77,10 +79,10 @@ execute tools.
 Phase 5 adds safety decisions and confirmations:
 
 ```bash
-sage text "start the frontend"
-sage commands recent
-sage commands confirm <command-id> "confirm start"
-sage commands cancel <command-id>
+.venv/bin/sage text "start the frontend"
+.venv/bin/sage commands recent
+.venv/bin/sage commands confirm <command-id> "confirm start"
+.venv/bin/sage commands cancel <command-id>
 ```
 
 After Phase 6, confirmed commands with registered tool actions can execute.
@@ -89,10 +91,10 @@ Commands without executable tool actions are only marked confirmed.
 Phase 6 adds the first typed tools:
 
 ```bash
-sage tools list
-sage text "what project is this"
-sage text "find process on port 3000"
-sage text "run tests"
+.venv/bin/sage tools list
+.venv/bin/sage text "what project is this"
+.venv/bin/sage text "find process on port 3000"
+.venv/bin/sage text "run tests"
 ```
 
 The exact tool calls depend on the local model's structured plan. Unknown tools
@@ -102,21 +104,21 @@ SAGE now also has a direct planner for obvious commands, so these can work even
 before the local LLM is tuned:
 
 ```bash
-sage text "what project is this"
-sage text "what is running on port 3000"
-sage text "list processes"
-sage text "run tests"
+.venv/bin/sage text "what project is this"
+.venv/bin/sage text "what is running on port 3000"
+.venv/bin/sage text "list processes"
+.venv/bin/sage text "run tests"
 ```
 
 Run local diagnostics:
 
 ```bash
-sage doctor
-sage diagnostics
+.venv/bin/sage doctor
+.venv/bin/sage diagnostics
 ```
 
-`sage doctor` exits non-zero when required local dependencies are missing. Piper
-is required only when `piper_enabled` is true.
+`.venv/bin/sage doctor` exits non-zero when required local dependencies are
+missing. Piper is required only when `piper_enabled` is true.
 
 The Electron control panel lives in `apps/electron-control-panel`:
 
@@ -137,5 +139,5 @@ npm run dev:electron
 The first MVP will use a KDE global shortcut that invokes:
 
 ```bash
-sage listen-once
+.venv/bin/sage listen-once
 ```

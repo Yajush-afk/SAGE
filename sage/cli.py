@@ -11,6 +11,7 @@ from urllib import error, request
 from sage import __version__
 from sage.contracts import RuntimeSettings
 from sage.daemon.server import run as run_daemon
+from sage.memory.store import SQLiteStore
 from sage.observability import run_diagnostics
 
 DEFAULT_DAEMON_URL = "http://127.0.0.1:8765"
@@ -107,6 +108,11 @@ def daemon_url(base_url: str, path: str) -> str:
     return f"{base_url.rstrip('/')}{path}"
 
 
+def load_runtime_settings() -> RuntimeSettings:
+    defaults = RuntimeSettings()
+    return SQLiteStore(defaults.database_path).load_settings() or defaults
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -184,7 +190,10 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if status < 400 else 1
 
         if args.command == "doctor":
-            diagnostics = [status.model_dump() for status in run_diagnostics(RuntimeSettings())]
+            diagnostics = [
+                status.model_dump()
+                for status in run_diagnostics(load_runtime_settings())
+            ]
             print_json(diagnostics)
             return 0 if all(item["ok"] or not item["required"] for item in diagnostics) else 1
     except RuntimeError as exc:

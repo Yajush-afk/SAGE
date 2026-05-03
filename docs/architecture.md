@@ -12,7 +12,7 @@ Initial runtime flow:
 
 ```text
 KDE shortcut
-  -> sage listen-once
+  -> .venv/bin/sage listen-once
   -> local daemon
   -> audio capture
   -> Whisper.cpp transcription

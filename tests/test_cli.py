@@ -124,6 +124,7 @@ def test_cli_doctor_returns_failure_when_required_check_fails(monkeypatch, capsy
         def model_dump(self):
             return {"name": "ollama", "ok": self.ok, "required": self.required, "detail": "missing"}
 
+    monkeypatch.setattr("sage.cli.load_runtime_settings", lambda: object())
     monkeypatch.setattr("sage.cli.run_diagnostics", lambda settings: [Diagnostic(False, True)])
 
     exit_code = main(["doctor"])
