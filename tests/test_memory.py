@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 
+from sage.context import generate_assistant_profile
 from sage.contracts import CommandRecord, CommandStatus, RuntimeSettings, WorkflowStep
 from sage.memory import SQLiteStore
 
@@ -16,6 +17,8 @@ def test_sqlite_store_persists_commands_settings_and_workflows(tmp_path):
 
     store.save_command(record)
     store.save_settings(RuntimeSettings(model_name="gemma4:e4b"))
+    profile = generate_assistant_profile()
+    store.save_profile(profile)
     workflow = store.save_workflow(
         name="inspect",
         steps=[WorkflowStep(tool_name="detect_project", arguments={})],
@@ -23,6 +26,7 @@ def test_sqlite_store_persists_commands_settings_and_workflows(tmp_path):
 
     assert store.list_recent_commands()[0].id == "cmd_1"
     assert store.load_settings().model_name == "gemma4:e4b"
+    assert store.load_profile().assistant_name == profile.assistant_name
     assert store.list_workflows()[0].name == "inspect"
     assert store.delete_workflow(workflow.id) is True
     assert store.stats()["command_count"] == 1

@@ -9,7 +9,10 @@ from pathlib import Path
 from uuid import uuid4
 
 from sage.audio import AudioRecorder, AudioRecordingError, FfmpegAudioRecorder
+from sage.context import generate_assistant_profile
 from sage.contracts import (
+    AssistantProfile,
+    AssistantProfileUpdate,
     CommandRecord,
     CommandStatus,
     ConfirmationRequest,
@@ -24,6 +27,7 @@ from sage.contracts import (
     SafetyAction,
     SafetyDecision,
     TextCommandRequest,
+    ToolCall,
     ToolResult,
     Workflow,
     WorkflowStep,
@@ -62,6 +66,9 @@ class DaemonState:
         default_settings = RuntimeSettings()
         self._store = store or SQLiteStore(default_settings.database_path)
         self._settings = self._store.load_settings() or default_settings
+        self._profile = self._store.load_profile() or generate_assistant_profile()
+        if self._store.load_profile() is None:
+            self._store.save_profile(self._profile)
         self._recent_commands: deque[CommandRecord] = deque(maxlen=max_recent_commands)
         for record in reversed(self._store.list_recent_commands(limit=max_recent_commands)):
             self._recent_commands.append(record)
@@ -76,6 +83,18 @@ class DaemonState:
     def settings(self) -> RuntimeSettings:
         return self._settings
 
+    @property
+    def profile(self) -> AssistantProfile:
+        return self._profile
+
+    def update_profile(self, update: AssistantProfileUpdate) -> AssistantProfile:
+        updates = update.model_dump(exclude_unset=True)
+        self._profile = self._profile.model_copy(
+            update={**updates, "updated_at": datetime.now(UTC)}
+        )
+        self._store.save_profile(self._profile)
+        return self._profile
+
     def update_settings(self, update: RuntimeSettingsUpdate) -> RuntimeSettings:
         old_database_path = self._settings.database_path
         updates = update.model_dump(exclude_unset=True)
@@ -85,6 +104,7 @@ class DaemonState:
             and isinstance(self._store, SQLiteStore)
         ):
             self._store = SQLiteStore(self._settings.database_path)
+            self._store.save_profile(self._profile)
         self._store.save_settings(self._settings)
         return self._settings
 
@@ -271,7 +291,13 @@ class DaemonState:
             )
         elif confirmed_record.intent_plan:
             confirmed_record = confirmed_record.model_copy(
-                update={"error": "No executable tool actions."}
+                update={
+                    "status": CommandStatus.FAILED,
+                    "error": (
+                        "I understood the request, but no registered executable tool "
+                        "was selected."
+                    ),
+                }
             )
         confirmed_record = self._speak_for_record(confirmed_record)
         updated = self._replace_command(confirmed_record)
@@ -298,6 +324,7 @@ class DaemonState:
             return direct
         context = PlannerContext(
             cwd=cwd,
+            assistant_profile=self._profile,
             available_tools=self._tool_registry.list_schemas(),
             safety_rules_summary=self._safety_rules_summary(),
             recent_commands=self._recent_command_context(),
@@ -315,6 +342,7 @@ class DaemonState:
         raw_audio_path: Path | None = None,
         transcription=None,
     ) -> CommandRecord:
+        plan = self._repair_missing_actions(plan)
         try:
             plan = self._validate_and_apply_tool_risk(plan)
         except ToolExecutionError as exc:
@@ -353,7 +381,26 @@ class DaemonState:
         )
         if safety_decision.action == SafetyAction.ALLOW and plan.actions:
             record = self._execute_record(record, cwd)
+        elif safety_decision.action == SafetyAction.ALLOW:
+            record = record.model_copy(
+                update={
+                    "status": CommandStatus.FAILED,
+                    "error": (
+                        "I understood the request, but no registered executable tool "
+                        "was selected."
+                    ),
+                }
+            )
         return self._speak_for_record(record)
+
+    def _repair_missing_actions(self, plan: IntentPlan) -> IntentPlan:
+        if plan.actions or not self._tool_registry.has_tool(plan.intent):
+            return plan
+        if not self._tool_registry.can_call_without_args(plan.intent):
+            return plan
+        return plan.model_copy(
+            update={"actions": [ToolCall(tool_name=plan.intent, arguments={})]}
+        )
 
     def _validate_and_apply_tool_risk(self, plan: IntentPlan) -> IntentPlan:
         highest_risk = plan.risk
@@ -384,6 +431,8 @@ class DaemonState:
             command_id=record.id,
             cwd=cwd,
             timeout_seconds=self._settings.tool_timeout_seconds,
+            assistant_profile=self._profile,
+            available_tools=self._tool_registry.list_schemas(),
         )
         try:
             for action in record.intent_plan.actions:
@@ -401,10 +450,11 @@ class DaemonState:
 
         success = all(result.success for result in results)
         latency_ms = int((datetime.now(UTC) - started_at).total_seconds() * 1000)
+        summary = _execution_summary(results, success)
         execution_result = ExecutionResult(
             command_id=record.id,
             success=success,
-            spoken_summary="Command completed." if success else "Command failed.",
+            spoken_summary=summary,
             details="\n".join(result.summary for result in results),
             tool_results=results,
             latency_ms=latency_ms,
@@ -508,6 +558,15 @@ class DaemonState:
         if not resolved.is_dir():
             raise ValueError(f"cwd is not a directory: {resolved}")
         return resolved
+
+
+def _execution_summary(results: list[ToolResult], success: bool) -> str:
+    if not results:
+        return "Command completed." if success else "Command failed."
+    summaries = [result.summary for result in results if result.summary]
+    if summaries:
+        return " ".join(summaries)
+    return "Command completed." if success else "Command failed."
 
 
 RISK_ORDER = {

@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from sage.api import create_app
 from sage.contracts import (
+    AssistantProfileUpdate,
     AudioRecording,
     IntentPlan,
     PlannerContext,
@@ -54,6 +55,7 @@ class FakePlanner:
         context: PlannerContext,
         settings: RuntimeSettings,
     ) -> IntentPlan:
+        assert context.assistant_profile.assistant_name
         return IntentPlan(
             intent="start_dev_server" if "start" in transcript else "inspect_project",
             confidence=0.9,
@@ -93,6 +95,40 @@ class UnknownToolPlanner:
             confidence=0.9,
             summary="Use an unknown tool.",
             actions=[ToolCall(tool_name="missing_tool", arguments={})],
+            risk=RiskLevel.READ_ONLY,
+            requires_confirmation=False,
+        )
+
+
+class KnownIntentMissingActionPlanner:
+    def plan(
+        self,
+        transcript: str,
+        context: PlannerContext,
+        settings: RuntimeSettings,
+    ) -> IntentPlan:
+        return IntentPlan(
+            intent="get_assistant_profile",
+            confidence=0.9,
+            summary="Report assistant identity and capabilities.",
+            actions=[],
+            risk=RiskLevel.READ_ONLY,
+            requires_confirmation=False,
+        )
+
+
+class UnknownIntentMissingActionPlanner:
+    def plan(
+        self,
+        transcript: str,
+        context: PlannerContext,
+        settings: RuntimeSettings,
+    ) -> IntentPlan:
+        return IntentPlan(
+            intent="unmapped_question",
+            confidence=0.7,
+            summary="No executable tool selected.",
+            actions=[],
             risk=RiskLevel.READ_ONLY,
             requires_confirmation=False,
         )
@@ -283,6 +319,30 @@ def test_settings_update_validates_bounds():
     assert response.status_code == 422
 
 
+def test_profile_can_be_read_and_updated():
+    client = make_client()
+
+    initial = client.get("/profile")
+    updated = client.put(
+        "/profile",
+        json={
+            "assistant_name": "Local Sage",
+            "assistant_role": "Local workflow assistant.",
+            "user_display_name": "Yajush",
+            "notes": ["Prefer concise spoken responses."],
+        },
+    )
+
+    assert initial.status_code == 200
+    assert initial.json()["assistant_name"]
+    assert initial.json()["device"]["hostname"]
+    assert updated.status_code == 200
+    assert updated.json()["assistant_name"] == "Local Sage"
+    assert updated.json()["assistant_role"] == "Local workflow assistant."
+    assert updated.json()["user_display_name"] == "Yajush"
+    assert updated.json()["notes"] == ["Prefer concise spoken responses."]
+
+
 def test_confirm_command_accepts_required_phrase():
     client = make_client()
     planned = client.post(
@@ -296,8 +356,8 @@ def test_confirm_command_accepts_required_phrase():
     )
 
     assert confirmed.status_code == 200
-    assert confirmed.json()["status"] == "confirmed"
-    assert confirmed.json()["error"] == "No executable tool actions."
+    assert confirmed.json()["status"] == "failed"
+    assert "no registered executable tool" in confirmed.json()["error"]
 
 
 def test_confirm_command_rejects_wrong_phrase():
@@ -355,6 +415,124 @@ def test_read_only_tool_executes_immediately(tmp_path):
     assert response.json()["status"] == "completed"
     assert response.json()["execution_result"]["success"] is True
     assert response.json()["execution_result"]["tool_results"][0]["tool_name"] == "detect_project"
+
+
+def test_executed_tool_summary_is_spoken(tmp_path):
+    client = make_client(make_state())
+
+    response = client.post(
+        "/commands/text",
+        json={
+            "command_text": "Hey, what system am I on?",
+            "source": "api",
+            "cwd": str(tmp_path),
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "completed"
+    assert body["execution_result"]["tool_results"][0]["tool_name"] == "get_system_info"
+    assert body["execution_result"]["spoken_summary"].startswith("You are on ")
+    assert body["speech_result"]["text"].startswith("You are on ")
+
+
+def test_memory_question_uses_direct_tool_without_planner(tmp_path):
+    client = make_client(make_state())
+
+    response = client.post(
+        "/commands/text",
+        json={
+            "command_text": "How much RAM do I have?",
+            "source": "api",
+            "cwd": str(tmp_path),
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "completed"
+    assert body["intent_plan"]["intent"] == "get_memory_info"
+    assert body["execution_result"]["tool_results"][0]["tool_name"] == "get_memory_info"
+    assert "GiB of RAM" in body["speech_result"]["text"]
+
+
+def test_identity_question_uses_stored_profile(tmp_path):
+    state = make_state()
+    state.update_profile(AssistantProfileUpdate(assistant_name="Laptop Sage"))
+    client = make_client(state)
+
+    response = client.post(
+        "/commands/text",
+        json={
+            "command_text": "Who are you?",
+            "source": "api",
+            "cwd": str(tmp_path),
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent_plan"]["intent"] == "get_assistant_profile"
+    assert "Laptop Sage" in body["speech_result"]["text"]
+    assert body["execution_result"]["tool_results"][0]["data"]["capabilities"]
+
+
+def test_identity_and_capability_question_uses_direct_profile_tool(tmp_path):
+    client = make_client(make_state())
+
+    response = client.post(
+        "/commands/text",
+        json={
+            "command_text": "Who are you and what are your functionalities?",
+            "source": "api",
+            "cwd": str(tmp_path),
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "completed"
+    assert body["intent_plan"]["intent"] == "get_assistant_profile"
+    assert body["intent_plan"]["actions"][0]["tool_name"] == "get_assistant_profile"
+    assert "currently registered capabilities" in body["speech_result"]["text"]
+
+
+def test_known_zero_arg_intent_without_action_is_repaired(tmp_path):
+    client = make_client(make_state(planner=KnownIntentMissingActionPlanner()))
+
+    response = client.post(
+        "/commands/text",
+        json={
+            "command_text": "describe your local role",
+            "source": "api",
+            "cwd": str(tmp_path),
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "completed"
+    assert body["intent_plan"]["actions"][0]["tool_name"] == "get_assistant_profile"
+
+
+def test_unknown_zero_action_plan_fails_instead_of_remaining_planned(tmp_path):
+    client = make_client(make_state(planner=UnknownIntentMissingActionPlanner()))
+
+    response = client.post(
+        "/commands/text",
+        json={
+            "command_text": "please handle something unsupported",
+            "source": "api",
+            "cwd": str(tmp_path),
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "failed"
+    assert "no registered executable tool" in body["error"]
+    assert body["speech_result"]["text"].startswith("Failed.")
 
 
 def test_unknown_tool_is_blocked(tmp_path):

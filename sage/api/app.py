@@ -7,6 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from sage import __version__
 from sage.contracts import (
+    AssistantProfile,
+    AssistantProfileUpdate,
     CommandRecord,
     ConfirmationRequest,
     DiagnosticStatus,
@@ -105,6 +107,14 @@ def create_app(state: DaemonState | None = None) -> FastAPI:
     @app.put("/settings", response_model=RuntimeSettings)
     def put_settings(update: RuntimeSettingsUpdate) -> RuntimeSettings:
         return runtime_state.update_settings(update)
+
+    @app.get("/profile", response_model=AssistantProfile)
+    def get_profile() -> AssistantProfile:
+        return runtime_state.profile
+
+    @app.put("/profile", response_model=AssistantProfile)
+    def put_profile(update: AssistantProfileUpdate) -> AssistantProfile:
+        return runtime_state.update_profile(update)
 
     return app
 

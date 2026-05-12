@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import re
 import subprocess
 import time
@@ -12,7 +13,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
-from sage.contracts import RiskLevel, ToolCall, ToolResult, ToolSchema
+from sage.contracts import AssistantProfile, RiskLevel, ToolCall, ToolResult, ToolSchema
 
 
 class ToolExecutionError(RuntimeError):
@@ -23,6 +24,8 @@ class ExecutionContext(BaseModel):
     command_id: str
     cwd: Path
     timeout_seconds: int
+    assistant_profile: AssistantProfile | None = None
+    available_tools: list[ToolSchema] = Field(default_factory=list)
 
     def resolve_path(self, path: Path | str | None = None) -> Path:
         target = self.cwd if path is None else Path(path)
@@ -261,6 +264,120 @@ class FindProcessOnPortTool(BaseTool):
         )
 
 
+class GetSystemInfoArgs(BaseModel):
+    pass
+
+
+class GetSystemInfoTool(BaseTool):
+    name = "get_system_info"
+    description = "Report basic local operating system, kernel, machine, Python, and shell details."
+    risk = RiskLevel.READ_ONLY
+    args_model = GetSystemInfoArgs
+
+    def run(self, args: GetSystemInfoArgs, context: ExecutionContext) -> ToolResult:
+        started_at = time.monotonic()
+        os_release = _read_os_release()
+        pretty_name = os_release.get("PRETTY_NAME")
+        data = {
+            "system": platform.system(),
+            "os_name": pretty_name,
+            "release": platform.release(),
+            "version": platform.version(),
+            "machine": platform.machine(),
+            "platform": platform.platform(),
+            "python_version": platform.python_version(),
+            "shell": os.environ.get("SHELL"),
+            "desktop": os.environ.get("XDG_CURRENT_DESKTOP"),
+            "session_type": os.environ.get("XDG_SESSION_TYPE"),
+            "cwd": str(context.cwd),
+        }
+        system_name = pretty_name or f"{data['system']} {data['release']}"
+        summary = f"You are on {system_name} ({data['machine']})."
+        return ToolResult(
+            tool_name=self.name,
+            success=True,
+            summary=summary,
+            data=data,
+            duration_ms=_elapsed_ms(started_at),
+        )
+
+
+class GetMemoryInfoArgs(BaseModel):
+    pass
+
+
+class GetMemoryInfoTool(BaseTool):
+    name = "get_memory_info"
+    description = "Report local RAM totals and current memory availability."
+    risk = RiskLevel.READ_ONLY
+    args_model = GetMemoryInfoArgs
+
+    def run(self, args: GetMemoryInfoArgs, context: ExecutionContext) -> ToolResult:
+        started_at = time.monotonic()
+        meminfo = _read_meminfo()
+        total_kib = meminfo.get("MemTotal", 0)
+        available_kib = meminfo.get("MemAvailable", 0)
+        used_kib = max(total_kib - available_kib, 0)
+        data = {
+            "total_bytes": total_kib * 1024,
+            "available_bytes": available_kib * 1024,
+            "used_bytes": used_kib * 1024,
+            "total_gib": _kib_to_gib(total_kib),
+            "available_gib": _kib_to_gib(available_kib),
+            "used_gib": _kib_to_gib(used_kib),
+        }
+        summary = (
+            f"You have {data['total_gib']:.1f} GiB of RAM, "
+            f"with {data['available_gib']:.1f} GiB available."
+        )
+        return ToolResult(
+            tool_name=self.name,
+            success=True,
+            summary=summary,
+            data=data,
+            duration_ms=_elapsed_ms(started_at),
+        )
+
+
+class GetAssistantProfileArgs(BaseModel):
+    pass
+
+
+class GetAssistantProfileTool(BaseTool):
+    name = "get_assistant_profile"
+    description = "Report SAGE's local identity and the generated laptop profile it is using."
+    risk = RiskLevel.READ_ONLY
+    args_model = GetAssistantProfileArgs
+
+    def run(self, args: GetAssistantProfileArgs, context: ExecutionContext) -> ToolResult:
+        started_at = time.monotonic()
+        profile = context.assistant_profile
+        if profile is None:
+            raise ToolExecutionError("assistant profile is not available")
+        device = profile.device
+        device_name = device.os_name or device.hostname
+        capabilities = _capabilities_from_tools(context.available_tools)
+        user_part = (
+            f" I am configured for {profile.user_display_name}."
+            if profile.user_display_name
+            else ""
+        )
+        capability_part = _capabilities_sentence(capabilities)
+        summary = (
+            f"I am {profile.assistant_name}. My role is: {profile.assistant_role}"
+            f"{user_part} I am running locally on {device_name}.{capability_part}"
+        )
+        data = profile.model_dump(mode="json")
+        data["capabilities"] = capabilities
+        return ToolResult(
+            tool_name=self.name,
+            success=True,
+            summary=summary,
+            data=data,
+            duration_ms=_elapsed_ms(started_at),
+        )
+
+
 class RunTestsArgs(BaseModel):
     command: str = Field(pattern=r"^(pytest|npm test|npm run test)$")
     cwd: Path | None = None
@@ -308,6 +425,13 @@ class ToolRegistry:
         except KeyError as exc:
             raise ToolExecutionError(f"unknown tool: {name}") from exc
 
+    def has_tool(self, name: str) -> bool:
+        return name in self._tools
+
+    def can_call_without_args(self, name: str) -> bool:
+        tool = self.get(name)
+        return all(not field.is_required() for field in tool.args_model.model_fields.values())
+
     def validate_tool_call(self, call: ToolCall) -> ToolCall:
         tool = self.get(call.tool_name)
         tool.args_model.model_validate(call.arguments)
@@ -329,9 +453,71 @@ def default_tools() -> list[Tool]:
         SearchProjectTextTool(),
         ListProcessesTool(),
         FindProcessOnPortTool(),
+        GetSystemInfoTool(),
+        GetMemoryInfoTool(),
+        GetAssistantProfileTool(),
         RunTestsTool(),
     ]
 
 
 def _elapsed_ms(started_at: float) -> int:
     return int((time.monotonic() - started_at) * 1000)
+
+
+def _capabilities_from_tools(tools: list[ToolSchema]) -> list[dict[str, str]]:
+    capabilities: list[dict[str, str]] = []
+    for tool in tools:
+        if tool.name == "get_assistant_profile":
+            continue
+        capabilities.append(
+            {
+                "name": tool.name,
+                "description": tool.description.rstrip("."),
+                "risk": tool.risk.value,
+            }
+        )
+    return capabilities
+
+
+def _capabilities_sentence(capabilities: list[dict[str, str]]) -> str:
+    if not capabilities:
+        return ""
+
+    descriptions = [capability["description"] for capability in capabilities[:6]]
+    if len(capabilities) > len(descriptions):
+        descriptions.append(f"{len(capabilities) - len(descriptions)} more registered tools")
+    joined = "; ".join(descriptions)
+    return f" My currently registered capabilities include: {joined}."
+
+
+def _read_os_release() -> dict[str, str]:
+    path = Path("/etc/os-release")
+    if not path.exists():
+        return {}
+    values: dict[str, str] = {}
+    for line in path.read_text(errors="ignore").splitlines():
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key] = value.strip().strip('"')
+    return values
+
+
+def _read_meminfo() -> dict[str, int]:
+    values: dict[str, int] = {}
+    for line in Path("/proc/meminfo").read_text(errors="ignore").splitlines():
+        if ":" not in line:
+            continue
+        key, raw_value = line.split(":", 1)
+        parts = raw_value.strip().split()
+        if not parts:
+            continue
+        try:
+            values[key] = int(parts[0])
+        except ValueError:
+            continue
+    return values
+
+
+def _kib_to_gib(kib: int) -> float:
+    return kib / 1024 / 1024

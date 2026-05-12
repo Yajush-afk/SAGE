@@ -152,8 +152,11 @@ def test_runtime_settings_accepts_audio_and_stt_settings():
 
 
 def test_planner_context_accepts_minimal_context(tmp_path):
+    from sage.context import generate_assistant_profile
+
     context = PlannerContext(
         cwd=tmp_path,
+        assistant_profile=generate_assistant_profile(),
         available_tools=[],
         safety_rules_summary="No execution.",
         recent_commands=[],

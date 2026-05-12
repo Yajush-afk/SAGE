@@ -12,6 +12,8 @@ dist/
 venv/
 .env
 .env.*
+!.env.example
+!apps/electron-control-panel/.env.example
 .DS_Store
 
 # Local runtime state

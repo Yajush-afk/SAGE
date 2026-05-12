@@ -1,183 +1,198 @@
 # Architecture
 
-SAGE is split into a local Python daemon and a later Electron control panel.
+SAGE is split into a local Python daemon and an Electron control panel. The
+daemon is the source of truth. It owns speech input, transcription, planning,
+safety validation, typed tool execution, speech output, persistence, and
+diagnostics.
 
-The daemon is the source of truth. It owns speech input, transcription, planning,
-safety validation, typed tool execution, speech output, memory, and logs.
-
-The Electron app will connect to the daemon over a local API and will not execute
+The Electron app connects to the daemon over the local API. It does not execute
 system commands directly.
 
-Initial runtime flow:
+## Runtime Flow
 
 ```text
-KDE shortcut
-  -> .venv/bin/sage listen-once
-  -> local daemon
-  -> audio capture
-  -> Whisper.cpp transcription
-  -> Ollama/Gemma planning
-  -> safety policy
+text command or push-to-talk
+  -> FastAPI daemon
+  -> optional audio capture with ffmpeg
+  -> optional Whisper.cpp transcription
+  -> direct planner for obvious commands
+  -> Ollama planner for other commands
+  -> strict IntentPlan validation
+  -> deterministic safety policy
   -> typed tool execution
-  -> Piper spoken response
-  -> SQLite logs
+  -> SQLite command record
+  -> optional Piper spoken response
+  -> Electron control panel display
+```
+
+```mermaid
+flowchart TD
+    Input[CLI/API text or listen-once] --> Daemon[DaemonState]
+    Daemon --> Recorder[ffmpeg recorder]
+    Recorder --> STT[Whisper.cpp provider]
+    STT --> Planner
+    Daemon --> Planner[Direct planner or Ollama planner]
+    Planner --> Plan[IntentPlan]
+    Plan --> Validate[Strict Pydantic contracts]
+    Validate --> Safety[SafetyPolicy]
+    Safety -->|allow| Registry[ToolRegistry]
+    Safety -->|confirmation required| Pending[Awaiting confirmation]
+    Safety -->|block| Blocked[Blocked command]
+    Registry --> Results[ToolResult list]
+    Results --> Store[(SQLiteStore)]
+    Pending --> Store
+    Blocked --> Store
+    Store --> API[FastAPI endpoints]
+    API --> UI[Electron control panel]
+    Results --> TTS[Piper TTS provider]
 ```
 
 ## Shared Contracts
 
 The command pipeline shares a single contract layer in `sage.contracts`.
 
-Core contracts:
+Core contracts include:
 
-- `VoiceCommand`
 - `ToolCall`
 - `IntentPlan`
 - `ToolResult`
 - `ExecutionResult`
+- `SpeechResult`
+- `CommandRecord`
+- `RuntimeSettings`
+- `AssistantProfile`
+- `Workflow`
 - `ToolSchema`
+- `DiagnosticStatus`
 
-All contracts reject unknown fields by default. This keeps model output,
-tool input, API payloads, and logs aligned around explicit schemas.
+All SAGE contract models reject unknown fields by default. That keeps model
+output, API payloads, tool input, and logs aligned around explicit schemas.
 
-## Phase 2 Local API
+## Local API
 
-The local daemon exposes a FastAPI app on `127.0.0.1:8765` by default.
+The daemon exposes a FastAPI app on `127.0.0.1:8765` by default.
 
-Initial endpoints:
+Current endpoints:
 
 - `GET /health`
 - `POST /commands/text`
 - `POST /commands/listen-once`
 - `GET /commands/recent`
-- `GET /tools`
-- `GET /settings`
-- `PUT /settings`
-
-Phase 2 intentionally keeps command history in memory. SQLite persistence is
-introduced later with memory and observability.
-
-## Phase 3 Voice Input
-
-`POST /commands/listen-once` now runs the voice input boundary:
-
-```text
-record WAV with ffmpeg
-  -> transcribe with Whisper.cpp provider
-  -> store transcript in recent command history
-  -> stop before planning/execution
-```
-
-The default STT path targets a Whisper.cpp/OpenAI-compatible HTTP endpoint at
-`http://127.0.0.1:2022/v1/audio/transcriptions`.
-
-Raw audio is deleted by default after transcription. Set `keep_raw_audio` to
-`true` only for debugging.
-
-## Phase 4 Intent Planning
-
-Text commands and transcribed voice commands now pass through an Ollama-backed
-planner.
-
-```text
-transcript
-  -> planner context
-  -> Ollama /api/chat
-  -> IntentPlan JSON
-  -> strict Pydantic validation
-  -> command history
-```
-
-The planner uses the `IntentPlan` JSON schema and retries once with a repair
-prompt if the model returns invalid JSON.
-
-Phase 4 still does not execute actions. If a plan is valid, the command status is
-`planned`; if Ollama is unavailable or the model output cannot be validated, the
-command status is `failed`.
-
-## Phase 5 Safety
-
-Every valid `IntentPlan` now passes through a deterministic safety policy before
-anything can be executed in later phases.
-
-```text
-IntentPlan
-  -> SafetyPolicy
-  -> SafetyDecision
-  -> command status
-```
-
-Safety outcomes:
-
-- `allow`: command stays `planned`
-- `require_confirmation`: command becomes `awaiting_confirmation`
-- `block`: command becomes `blocked`
-
-Destructive, privileged, credential-related, and explicitly blocked patterns are
-blocked in this phase. State-changing commands require exact confirmation phrases
-such as `confirm start`, `confirm stop`, or `confirm kill`.
-
-Confirmation and cancellation endpoints:
-
 - `POST /commands/{command_id}/confirm`
 - `POST /commands/{command_id}/cancel`
+- `GET /tools`
+- `GET /workflows`
+- `POST /workflows`
+- `DELETE /workflows/{workflow_id}`
+- `GET /diagnostics`
+- `GET /storage`
+- `GET /settings`
+- `PUT /settings`
+- `GET /profile`
+- `PUT /profile`
 
-After Phase 6, confirmed commands with registered tool actions can execute.
-Confirmed commands without executable actions remain recorded but do not run.
+Command detail and workflow execution endpoints are planned next.
 
-## Phase 6 Typed Tools
+## Planning
 
-SAGE now has a typed tool registry. The planner sees registered tool schemas, and
-the daemon validates every planned tool name and argument before execution.
+SAGE has two planning paths.
 
-Initial tools:
+The direct planner handles reliable local commands without calling the LLM, such
+as:
 
-- `detect_project`
-- `get_project_summary`
-- `search_project_text`
-- `list_processes`
-- `find_process_on_port`
-- `run_tests`
+- assistant identity and capabilities
+- system info
+- memory info
+- project detection
+- project summary
+- process listing
+- port lookup
+- running the constrained test command
+
+Other commands go to the Ollama planner. The planner asks Ollama for one JSON
+object matching the `IntentPlan` schema. The result is parsed and validated with
+Pydantic. If validation fails, SAGE retries once with a repair prompt by default.
+
+## Safety And Execution
+
+SAGE does not run arbitrary model-generated shell commands.
 
 Execution rules:
 
-- read-only and safe-execution tools can run after planning
-- state-changing tools require confirmation before execution
-- unknown tools are blocked
-- tool paths are constrained to the command workspace
-- confirmed commands execute in the original command directory
+- every executable action must be a registered typed tool,
+- unknown tools are blocked,
+- tool arguments must validate against the tool's Pydantic args model,
+- tool paths are constrained to the command workspace,
+- read-only and safe-execution tools can execute immediately,
+- state-changing plans require exact confirmation,
+- destructive, privileged, credential-related, and explicitly blocked patterns
+  are blocked.
 
-## Phase 7-10 Voice MVP
+Allowed plans with actions execute through `ToolRegistry`. Results are stored in
+the command record. Plans with no executable actions fail with a clear error
+instead of remaining indefinitely planned.
 
-The daemon can now speak concise responses through a `TTSProvider`. Piper is the
-default provider, and missing Piper configuration is recorded as a speech failure
-without failing the command itself.
+## Persistence
 
 SQLite stores:
 
-- command records
-- runtime settings
-- workflows
+- command records,
+- runtime settings,
+- assistant profile,
+- workflows.
 
-Diagnostics expose local dependency status for `ffmpeg`, `rg`, Ollama, Piper,
-audio playback, database path, and Piper voice configuration.
+The daemon loads recent command history from SQLite on startup and also keeps a
+bounded in-memory recent-command deque for fast access.
 
-The MVP loop is:
+## Voice
+
+Voice input:
 
 ```text
-text or voice
-  -> direct planner for obvious commands or Ollama planner
-  -> safety policy
-  -> typed tools
-  -> command persistence
-  -> optional spoken response
+record WAV with ffmpeg
+  -> transcribe with Whisper.cpp HTTP or CLI provider
+  -> process the transcript like a text command
 ```
 
-## Phase 11 Control Panel
+Raw audio is deleted by default. Set `keep_raw_audio` to `true` only for
+debugging.
+
+Voice output:
+
+```text
+command record
+  -> spoken summary
+  -> Piper synthesis
+  -> audio playback
+```
+
+Missing Piper configuration is recorded as a speech failure without failing the
+command itself.
+
+## Control Panel
 
 The Electron control panel under `apps/electron-control-panel` reads from the
-daemon API and shows health, diagnostics, command history, tools, and workflows.
-It does not execute system commands directly.
+daemon API and shows:
 
-The daemon enables CORS only for the local control panel dev origins. The
+- health,
+- diagnostics,
+- recent commands,
+- registered tools,
+- workflows,
+- storage stats.
+
+The daemon enables CORS only for local control-panel development origins. The
 Electron main process uses context isolation, sandboxing, disabled Node
 integration, and blocks arbitrary navigation/window creation.
+
+## Deferred Architecture
+
+These are intentionally out of the portfolio-ready critical path:
+
+- wake word,
+- always-on assistant mode,
+- custom remote API providers,
+- hybrid LLM routing,
+- plugin system,
+- production installers,
+- cross-platform support.

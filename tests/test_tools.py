@@ -3,12 +3,20 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from sage.context import generate_assistant_profile
 from sage.contracts import ToolCall
 from sage.tools import ExecutionContext, ToolExecutionError, ToolRegistry
 
 
 def make_context(tmp_path: Path) -> ExecutionContext:
-    return ExecutionContext(command_id="cmd_1", cwd=tmp_path.resolve(), timeout_seconds=5)
+    registry = ToolRegistry()
+    return ExecutionContext(
+        command_id="cmd_1",
+        cwd=tmp_path.resolve(),
+        timeout_seconds=5,
+        assistant_profile=generate_assistant_profile(),
+        available_tools=registry.list_schemas(),
+    )
 
 
 def test_registry_lists_builtin_tool_schemas():
@@ -19,6 +27,9 @@ def test_registry_lists_builtin_tool_schemas():
     assert "detect_project" in tool_names
     assert "get_project_summary" in tool_names
     assert "find_process_on_port" in tool_names
+    assert "get_system_info" in tool_names
+    assert "get_memory_info" in tool_names
+    assert "get_assistant_profile" in tool_names
     assert "run_tests" in tool_names
 
 
@@ -48,6 +59,51 @@ def test_get_project_summary_reads_package_scripts(tmp_path):
 
     assert result.data["name"] == "demo-app"
     assert result.data["scripts"]["test"] == "vitest"
+
+
+def test_get_system_info_reports_local_platform(tmp_path):
+    registry = ToolRegistry()
+
+    result = registry.run(
+        ToolCall(tool_name="get_system_info", arguments={}),
+        make_context(tmp_path),
+    )
+
+    assert result.success is True
+    assert result.data["system"]
+    assert "os_name" in result.data
+    assert result.data["machine"]
+    assert str(tmp_path.resolve()) == result.data["cwd"]
+
+
+def test_get_memory_info_reports_ram_totals(tmp_path):
+    registry = ToolRegistry()
+
+    result = registry.run(
+        ToolCall(tool_name="get_memory_info", arguments={}),
+        make_context(tmp_path),
+    )
+
+    assert result.success is True
+    assert result.data["total_bytes"] > 0
+    assert result.data["total_gib"] > 0
+    assert "GiB of RAM" in result.summary
+
+
+def test_get_assistant_profile_reports_local_identity(tmp_path):
+    registry = ToolRegistry()
+
+    result = registry.run(
+        ToolCall(tool_name="get_assistant_profile", arguments={}),
+        make_context(tmp_path),
+    )
+
+    assert result.success is True
+    assert result.data["assistant_name"]
+    assert result.data["capabilities"]
+    assert result.summary.startswith("I am ")
+    assert "running locally" in result.summary
+    assert "currently registered capabilities" in result.summary
 
 
 def test_tool_context_rejects_paths_outside_workspace(tmp_path):

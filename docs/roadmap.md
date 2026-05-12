@@ -1,90 +1,201 @@
 # Roadmap
 
-## Phase 0
+SAGE is currently a working local MVP / early alpha. The next build path focuses
+on usability, auditability, setup reliability, and portfolio polish before
+adding larger AI/platform features.
 
-Repository and environment foundation.
+## Implemented Foundation
 
-## Phase 1
+- Repository and environment foundation.
+- Strict Pydantic contracts for commands, plans, tools, settings, profile,
+  workflows, and diagnostics.
+- Local FastAPI daemon and CLI.
+- Whisper.cpp speech-to-text boundary.
+- Ollama structured intent planner.
+- Deterministic direct planner for common local commands.
+- Deterministic safety policy with confirmation support.
+- Typed tool registry.
+- Piper text-to-speech adapter.
+- SQLite settings, command history, assistant profile, and workflows.
+- Diagnostics endpoint and `sage doctor`.
+- Electron control panel dashboard.
+- Local stack supervisor through `sage start` and `sage start --with-ui`.
 
-Core data contracts for voice commands, intent plans, tool calls, risk levels,
-and execution results.
+## Phase 1: Documentation, Setup, And Demo Baseline
 
-Status: implemented.
+Status: in progress.
 
-## Phase 2
+Goal:
 
-Local daemon and API.
+- make the current implementation understandable, reproducible, and demoable.
 
-Status: implemented.
+Deliverables:
 
-## Phase 3
+- accurate README,
+- accurate setup, architecture, roadmap, and safety docs,
+- local config examples,
+- setup script,
+- demo-readiness check script,
+- reliable first demo command list.
 
-Whisper.cpp speech-to-text.
+## Phase 2: Doctor, Diagnostics, And Setup Reliability
 
-Status: implemented.
+Goal:
 
-## Phase 4
+- make local dependency failures actionable.
 
-Ollama/Gemma 4 planner.
+Planned:
 
-Status: implemented.
+- diagnostic fix hints,
+- severity levels,
+- clearer human-readable `sage doctor`,
+- port conflict checks,
+- better docs links from diagnostics.
 
-## Phase 5
+## Phase 3: Command Auditability
 
-Deterministic safety engine.
+Goal:
 
-Status: implemented.
+- make every command inspectable end to end.
 
-## Phase 6
+Planned:
 
-Typed tool registry.
+- `GET /commands/{command_id}`,
+- `sage commands show <command-id>`,
+- command detail UI panel,
+- richer command detail types in the frontend.
 
-Status: implemented.
+## Phase 4: UI Command Input And Push-To-Talk UX
 
-## Phase 7
+Goal:
 
-Piper text-to-speech.
+- make the control panel useful as an assistant surface, not only a dashboard.
 
-Status: implemented.
+Planned:
 
-## Phase 8
+- text command input,
+- listen-once button,
+- visible command states,
+- confirm/cancel controls,
+- demo command panel.
 
-SQLite memory and workflows.
+## Phase 5: Spoken Response And Voice Confirmation UX
 
-Status: implemented.
+Goal:
 
-## Phase 9
+- make voice responses short, natural, and safety-aware.
 
-Observability and command logs.
+Planned:
 
-Status: implemented.
+- response formatter,
+- clearer failed/unsupported command summaries,
+- spoken confirmation for latest pending command,
+- voice cancellation with "cancel that".
 
-## Phase 10
+## Phase 6: Project Context Tools
 
-MVP acceptance build.
+Goal:
 
-Status: implemented.
+- improve repo awareness through deterministic read-only tools.
 
-## Phase 11
+Planned:
 
-Electron control panel.
+- git status tool,
+- project file listing,
+- file excerpt tool,
+- combined project context tool,
+- direct-planner coverage for project questions.
 
-Status: implemented.
+## Phase 7: Multi-Tool Execution
 
-## Phase 12
+Goal:
 
-Voice UX improvements.
+- support controlled typed tool composition.
 
-Status: implemented as direct command helpers and retryable confirmations.
+Planned:
 
-## Phase 13
+- sequential multi-action execution,
+- ordered result persistence,
+- mixed-risk handling,
+- combined summaries.
 
-Project context and local retrieval.
+## Phase 8: Runnable Workflows
 
-Status: implemented through project summary and ripgrep search tools.
+Goal:
 
-## Phase 14
+- turn saved workflows into executable typed routines.
 
-Packaging and local install.
+Planned:
 
-Status: partially implemented through `sage doctor` and diagnostics endpoints.
+- workflow run API,
+- workflow run CLI,
+- workflow inspect/run/delete UI.
+
+## Phase 9: Internal Provider Abstraction
+
+Goal:
+
+- make the planner boundary cleaner without expanding scope.
+
+Planned:
+
+- small internal provider interface,
+- keep Ollama as the only supported concrete provider for portfolio-ready.
+
+Deferred:
+
+- custom remote API providers,
+- hybrid local/cloud routing,
+- API key handling.
+
+## Phase 10: Reliability And Runtime Supervision
+
+Goal:
+
+- make local demos fail clearly and recoverably.
+
+Planned:
+
+- startup port checks,
+- readiness waits,
+- clearer child-process failure output,
+- optional external Whisper mode,
+- structured logs,
+- storage cleanup commands.
+
+## Phase 11: Safety Hardening
+
+Goal:
+
+- strengthen the safety story as a portfolio centerpiece.
+
+Planned:
+
+- `ToolPolicy` metadata,
+- output redaction,
+- confirmation attempt tracking,
+- expired confirmation display,
+- "why blocked" UI.
+
+## Phase 12: Portfolio Packaging
+
+Goal:
+
+- make the GitHub repo easy to try and easy to evaluate.
+
+Planned:
+
+- screenshots/GIFs,
+- architecture decisions doc,
+- future production path doc,
+- final portfolio narrative.
+
+## Deferred Until After Portfolio Ready
+
+- wake word,
+- always-on assistant mode,
+- custom remote providers,
+- hybrid LLM routing,
+- plugin system,
+- production installers,
+- cross-platform support.

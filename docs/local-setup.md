@@ -1,143 +1,214 @@
 # Local Setup
 
-SAGE is designed to run without paid APIs.
+SAGE is designed to run locally without paid APIs. The setup has two parts:
+repo-local development dependencies that scripts can install, and machine-local
+audio/model/service wiring that you must configure on your laptop.
 
-Target development environment:
+## Target Environment
 
-- Fedora KDE Wayland
-- Repo-local Python `.venv`
-- ffmpeg
-- Whisper.cpp
-- Ollama with Gemma 4
-- Piper
+- Linux desktop, currently developed against Fedora KDE Wayland
+- Python 3.12 or newer
+- Repo-local `.venv`
+- `ffmpeg`
+- `rg`
+- Whisper.cpp server or CLI
+- Ollama with the configured local model
+- Piper and a local Piper voice model, unless TTS is disabled
+- Node/npm for the Electron control panel
 
-Create the Python environment:
+## Repo Setup
+
+From the repository root:
+
+```bash
+./scripts/setup-local.sh
+```
+
+Equivalent manual commands:
 
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip setuptools wheel
 .venv/bin/python -m pip install -e ".[dev]"
+
+cd apps/electron-control-panel
+npm install
 ```
 
-Verify the scaffold:
+Verify the development scaffold:
 
 ```bash
 .venv/bin/sage --help
 .venv/bin/pytest
 .venv/bin/ruff check .
+cd apps/electron-control-panel && npm run build
 ```
 
-Start the Phase 2 local daemon:
+## Manual Local Wiring
+
+These items are machine-specific and cannot be committed for you.
+
+### Ollama
+
+Install Ollama, start it, and pull the configured model:
 
 ```bash
-.venv/bin/sage daemon start
+systemctl start ollama
+ollama pull gemma4
 ```
 
-In another shell:
+If you use a different model, update runtime settings through the daemon
+settings API once the daemon is running.
 
-```bash
-.venv/bin/sage daemon health
-.venv/bin/sage text "start the frontend"
-.venv/bin/sage commands recent
-.venv/bin/sage tools list
-```
+### Whisper.cpp
 
-Phase 3 voice input requires a local Whisper.cpp-compatible transcription
-endpoint before `.venv/bin/sage listen-once` can produce transcripts. SAGE
-defaults to:
+SAGE defaults to a Whisper.cpp/OpenAI-compatible HTTP endpoint:
 
 ```text
 http://127.0.0.1:2022/v1/audio/transcriptions
 ```
 
-The recorder uses `ffmpeg` against the default PulseAudio/PipeWire input:
+`.venv/bin/sage start` can start `whisper-server`, but only after
+`whisper_model_path` points to a real local model file. The model itself is not
+tracked in this repo.
+
+### Piper
+
+Piper is optional at runtime, but enabled by default. Configure:
+
+- `piper_binary_path`
+- `piper_voice_path`
+- `audio_player`
+
+If `piper_voice_path` is not configured, commands can still complete, but the
+speech result records a TTS failure.
+
+### Audio Input
+
+Voice input records from ffmpeg against the default PulseAudio/PipeWire input:
 
 ```text
 ffmpeg -f pulse -i default
 ```
 
-If Whisper.cpp is not running, `.venv/bin/sage listen-once` records the failure
-in command history instead of executing anything.
+If your microphone is not the default input, update `audio_input` in runtime
+settings.
 
-Phase 4 planning requires Ollama to be running with the configured local model:
+### Control Panel API URL
 
-```bash
-ollama serve
-ollama pull gemma4
+The control panel defaults to:
+
+```text
+http://127.0.0.1:8765
 ```
 
-Then run:
+Only create `apps/electron-control-panel/.env.local` if you run the daemon at a
+different URL:
 
-```bash
-.venv/bin/sage text "start the frontend"
-.venv/bin/sage commands recent
+```text
+VITE_SAGE_API_URL=http://127.0.0.1:8765
 ```
 
-At this phase SAGE should produce a validated intent plan, but it still will not
-execute tools.
+## Start The Stack
 
-Phase 5 adds safety decisions and confirmations:
+Start Ollama separately:
 
 ```bash
-.venv/bin/sage text "start the frontend"
-.venv/bin/sage commands recent
-.venv/bin/sage commands confirm <command-id> "confirm start"
-.venv/bin/sage commands cancel <command-id>
+systemctl start ollama
 ```
 
-After Phase 6, confirmed commands with registered tool actions can execute.
-Commands without executable tool actions are only marked confirmed.
-
-Phase 6 adds the first typed tools:
+Then start SAGE:
 
 ```bash
+.venv/bin/sage start
+```
+
+Start the daemon plus the Vite control panel:
+
+```bash
+.venv/bin/sage start --with-ui
+```
+
+Open:
+
+```text
+http://127.0.0.1:5174
+```
+
+The Electron shell can also be opened against the Vite dev server:
+
+```bash
+cd apps/electron-control-panel
+npm run dev:electron
+```
+
+## Smoke Test
+
+In another shell:
+
+```bash
+.venv/bin/sage daemon health
 .venv/bin/sage tools list
+.venv/bin/sage text "who are you"
 .venv/bin/sage text "what project is this"
-.venv/bin/sage text "find process on port 3000"
+.venv/bin/sage text "summarize this project"
+.venv/bin/sage text "what is running on port 3000"
 .venv/bin/sage text "run tests"
+.venv/bin/sage commands recent
 ```
 
-The exact tool calls depend on the local model's structured plan. Unknown tools
-are blocked, and tool arguments are validated before execution.
-
-SAGE now also has a direct planner for obvious commands, so these can work even
-before the local LLM is tuned:
+Voice input:
 
 ```bash
-.venv/bin/sage text "what project is this"
-.venv/bin/sage text "what is running on port 3000"
-.venv/bin/sage text "list processes"
-.venv/bin/sage text "run tests"
+.venv/bin/sage listen-once
 ```
 
-Run local diagnostics:
+## Diagnostics
 
 ```bash
 .venv/bin/sage doctor
 .venv/bin/sage diagnostics
 ```
 
-`.venv/bin/sage doctor` exits non-zero when required local dependencies are
-missing. Piper is required only when `piper_enabled` is true.
+Current diagnostics report dependency status. The next implementation phase will
+make `sage doctor` more actionable by adding fix hints and clearer severity.
 
-The Electron control panel lives in `apps/electron-control-panel`:
+## Profile
 
-```bash
-cd apps/electron-control-panel
-npm install
-npm run dev
-```
-
-The daemon allows the Vite control panel origins `http://127.0.0.1:5174` and
-`http://localhost:5174`. To open the Electron shell against the Vite dev server:
+SAGE creates a local editable profile on first run. The profile stores the
+assistant name, role, user display name, and generated laptop context such as OS,
+desktop session, shell, CPU, and RAM.
 
 ```bash
-npm run dev
-npm run dev:electron
+.venv/bin/sage profile show
+.venv/bin/sage profile set --assistant-name "Laptop Sage" --user-name "Yajush"
 ```
 
-The first MVP will use a KDE global shortcut that invokes:
+## Demo Readiness
+
+Run the local verification script:
 
 ```bash
-.venv/bin/sage listen-once
+./scripts/check-demo-ready.sh
 ```
+
+By default it runs Python tests, Ruff, the control panel build, and `sage
+doctor`. If the local audio/model stack is not fully wired yet, use:
+
+```bash
+SKIP_DOCTOR=1 ./scripts/check-demo-ready.sh
+```
+
+Skipping doctor is useful for CI-like checks, but a real demo should pass doctor
+on the target laptop.
+
+## KDE Shortcut
+
+The intended first push-to-talk shortcut invokes:
+
+```bash
+/absolute/path/to/SAGE/.venv/bin/sage listen-once
+```
+
+Global shortcut wiring is manual for now. Later UI/packaging phases may make
+this smoother.

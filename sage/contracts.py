@@ -264,8 +264,45 @@ class RecentCommand(SageModel):
     intent: str | None = None
 
 
+class DeviceProfile(SageModel):
+    hostname: str = Field(min_length=1)
+    username: str = Field(min_length=1)
+    home_dir: Path
+    os_name: str | None = None
+    kernel: str | None = None
+    machine: str | None = None
+    desktop: str | None = None
+    session_type: str | None = None
+    shell: str | None = None
+    cpu_model: str | None = None
+    cpu_count: int | None = Field(default=None, ge=1)
+    ram_total_gib: float | None = Field(default=None, ge=0)
+    generated_at: datetime
+
+
+class AssistantProfile(SageModel):
+    assistant_name: str = Field(default="SAGE", min_length=1)
+    assistant_role: str = Field(
+        default="Local-first voice command layer for this laptop.",
+        min_length=1,
+    )
+    user_display_name: str | None = None
+    device: DeviceProfile
+    notes: list[str] = Field(default_factory=list)
+    updated_at: datetime
+
+
+class AssistantProfileUpdate(SageModel):
+    assistant_name: str | None = Field(default=None, min_length=1)
+    assistant_role: str | None = Field(default=None, min_length=1)
+    user_display_name: str | None = None
+    device: DeviceProfile | None = None
+    notes: list[str] | None = None
+
+
 class PlannerContext(SageModel):
     cwd: Path
+    assistant_profile: AssistantProfile
     available_tools: list[ToolSchema] = Field(default_factory=list)
     safety_rules_summary: str
     recent_commands: list[RecentCommand] = Field(default_factory=list)
@@ -322,6 +359,9 @@ def export_contract_schemas() -> dict[str, dict[str, Any]]:
         "TextCommandRequest": TextCommandRequest.model_json_schema(),
         "ConfirmationRequest": ConfirmationRequest.model_json_schema(),
         "RecentCommand": RecentCommand.model_json_schema(),
+        "DeviceProfile": DeviceProfile.model_json_schema(),
+        "AssistantProfile": AssistantProfile.model_json_schema(),
+        "AssistantProfileUpdate": AssistantProfileUpdate.model_json_schema(),
         "PlannerContext": PlannerContext.model_json_schema(),
         "WorkflowStep": WorkflowStep.model_json_schema(),
         "Workflow": Workflow.model_json_schema(),

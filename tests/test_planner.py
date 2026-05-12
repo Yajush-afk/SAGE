@@ -4,6 +4,7 @@ from urllib import error
 import pytest
 from pydantic import ValidationError
 
+from sage.context import generate_assistant_profile
 from sage.contracts import PlannerContext, RiskLevel, RuntimeSettings
 from sage.planner import OllamaPlanner, PlannerError, build_planner_messages, parse_intent_plan
 
@@ -51,6 +52,7 @@ def test_parse_intent_plan_rejects_invalid_shape():
 def test_build_planner_messages_includes_context(tmp_path):
     context = PlannerContext(
         cwd=tmp_path,
+        assistant_profile=generate_assistant_profile(),
         available_tools=[],
         safety_rules_summary="No execution.",
         recent_commands=[],
@@ -101,6 +103,7 @@ def test_ollama_planner_sends_schema_and_parses_response(monkeypatch, tmp_path):
 
     context = PlannerContext(
         cwd=tmp_path,
+        assistant_profile=generate_assistant_profile(),
         available_tools=[],
         safety_rules_summary="No execution.",
         recent_commands=[],
@@ -154,6 +157,7 @@ def test_ollama_planner_repairs_invalid_output(monkeypatch, tmp_path):
 
     context = PlannerContext(
         cwd=tmp_path,
+        assistant_profile=generate_assistant_profile(),
         available_tools=[],
         safety_rules_summary="No execution.",
         recent_commands=[],
@@ -175,6 +179,7 @@ def test_ollama_planner_reports_connection_failure(monkeypatch, tmp_path):
 
     context = PlannerContext(
         cwd=tmp_path,
+        assistant_profile=generate_assistant_profile(),
         available_tools=[],
         safety_rules_summary="No execution.",
         recent_commands=[],

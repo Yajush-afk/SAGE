@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-from sage.contracts import CommandRecord, RuntimeSettings, Workflow, WorkflowStep
+from sage.contracts import AssistantProfile, CommandRecord, RuntimeSettings, Workflow, WorkflowStep
 
 
 class SQLiteStore:
@@ -91,6 +91,25 @@ class SQLiteStore:
             return None
         return RuntimeSettings.model_validate_json(row["payload"])
 
+    def save_profile(self, profile: AssistantProfile) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO settings (key, payload, updated_at)
+                VALUES ('assistant_profile', ?, ?)
+                """,
+                (profile.model_dump_json(), datetime.now(UTC).isoformat()),
+            )
+
+    def load_profile(self) -> AssistantProfile | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT payload FROM settings WHERE key = 'assistant_profile'"
+            ).fetchone()
+        if row is None:
+            return None
+        return AssistantProfile.model_validate_json(row["payload"])
+
     def save_workflow(
         self,
         name: str,
@@ -149,6 +168,7 @@ class InMemoryStore:
     def __init__(self) -> None:
         self.commands: dict[str, CommandRecord] = {}
         self.settings: RuntimeSettings | None = None
+        self.profile: AssistantProfile | None = None
         self.workflows: dict[str, Workflow] = {}
 
     def save_command(self, record: CommandRecord) -> None:
@@ -166,6 +186,12 @@ class InMemoryStore:
 
     def load_settings(self) -> RuntimeSettings | None:
         return self.settings
+
+    def save_profile(self, profile: AssistantProfile) -> None:
+        self.profile = profile
+
+    def load_profile(self) -> AssistantProfile | None:
+        return self.profile
 
     def save_workflow(
         self,
