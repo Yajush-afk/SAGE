@@ -124,6 +124,7 @@ After the daemon is running, use these reliable commands first:
 .venv/bin/sage text "what is running on port 3000"
 .venv/bin/sage text "run tests"
 .venv/bin/sage commands recent
+.venv/bin/sage commands show <command-id>
 ```
 
 For voice:

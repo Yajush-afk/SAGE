@@ -64,6 +64,8 @@ def test_diagnostics_report_missing_configured_whisper_model(monkeypatch, tmp_pa
 
     assert by_name["whisper_model"].required is True
     assert by_name["whisper_model"].ok is False
+    assert by_name["whisper_model"].severity == "error"
+    assert "whisper_model_path" in by_name["whisper_model"].fix_hint
 
 
 def test_diagnostics_report_missing_ollama_model(monkeypatch):
@@ -76,3 +78,23 @@ def test_diagnostics_report_missing_ollama_model(monkeypatch):
 
     assert by_name["ollama_model"].ok is False
     assert by_name["ollama_model"].detail == "gemma4:e4b not pulled"
+    assert by_name["ollama_model"].severity == "error"
+    assert by_name["ollama_model"].fix_hint == "Run `ollama pull gemma4:e4b`."
+
+
+def test_diagnostics_include_fix_hint_for_unreachable_whisper_endpoint(monkeypatch):
+    _mock_binaries(monkeypatch)
+    _mock_ollama_models(monkeypatch, "gemma4:latest abc 1GB now\n")
+
+    def unreachable(*args, **kwargs):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr("sage.observability.diagnostics.request.urlopen", unreachable)
+
+    diagnostics = run_diagnostics(RuntimeSettings(piper_enabled=False))
+    by_name = {item.name: item for item in diagnostics}
+
+    assert by_name["whisper_endpoint"].ok is False
+    assert by_name["whisper_endpoint"].severity == "error"
+    assert "whisper-server" in by_name["whisper_endpoint"].fix_hint
+    assert by_name["whisper_endpoint"].docs_anchor == "docs/local-setup.md#whispercpp"

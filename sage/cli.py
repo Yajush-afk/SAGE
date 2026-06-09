@@ -69,13 +69,21 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--ui-host", default="127.0.0.1", help="Control panel bind host.")
     start.add_argument("--ui-port", default=5174, type=int, help="Control panel bind port.")
 
-    subcommands.add_parser("doctor", help="Check local SAGE dependencies.")
+    doctor = subcommands.add_parser("doctor", help="Check local SAGE dependencies.")
+    doctor.add_argument(
+        "--json",
+        action="store_true",
+        help="Print raw diagnostic JSON instead of the human-readable report.",
+    )
 
     commands = subcommands.add_parser("commands", help="Inspect command history.")
     commands_subcommands = commands.add_subparsers(dest="commands_command")
     recent = commands_subcommands.add_parser("recent", help="List recent commands.")
     recent.add_argument("--url", default=DEFAULT_DAEMON_URL, help="Daemon base URL.")
     recent.add_argument("--limit", default=20, type=int, help="Number of commands to show.")
+    show = commands_subcommands.add_parser("show", help="Show one command record.")
+    show.add_argument("command_id", help="Command id to inspect.")
+    show.add_argument("--url", default=DEFAULT_DAEMON_URL, help="Daemon base URL.")
     confirm = commands_subcommands.add_parser("confirm", help="Confirm a pending command.")
     confirm.add_argument("command_id", help="Command id to confirm.")
     confirm.add_argument("phrase", help="Required confirmation phrase.")
@@ -213,6 +221,14 @@ def main(argv: list[str] | None = None) -> int:
             print_json(body)
             return 0 if status < 400 else 1
 
+        if args.command == "commands" and args.commands_command == "show":
+            status, body = request_json(
+                "GET",
+                daemon_url(args.url, f"/commands/{args.command_id}"),
+            )
+            print_json(body)
+            return 0 if status < 400 else 1
+
         if args.command == "commands" and args.commands_command == "confirm":
             status, body = request_json(
                 "POST",
@@ -265,18 +281,51 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if status < 400 else 1
 
         if args.command == "doctor":
-            diagnostics = [
-                status.model_dump()
-                for status in run_diagnostics(load_runtime_settings())
-            ]
-            print_json(diagnostics)
-            return 0 if all(item["ok"] or not item["required"] for item in diagnostics) else 1
+            diagnostics = run_diagnostics(load_runtime_settings())
+            if args.json:
+                print_json([status.model_dump() for status in diagnostics])
+            else:
+                print_doctor_report(diagnostics)
+            return 0 if all(status.ok or not status.required for status in diagnostics) else 1
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return 1
 
     parser.print_help()
     return 1
+
+
+def print_doctor_report(diagnostics) -> None:
+    print("SAGE doctor")
+    print("")
+    for status in diagnostics:
+        marker = _doctor_marker(status)
+        required = "required" if status.required else "optional"
+        print(f"{marker} {status.name} ({required})")
+        print(f"    {status.detail}")
+        if not status.ok and status.fix_hint:
+            print(f"    fix: {status.fix_hint}")
+        if not status.ok and status.docs_anchor:
+            print(f"    docs: {status.docs_anchor}")
+    print("")
+    failures = [status for status in diagnostics if not status.ok and status.required]
+    warnings = [status for status in diagnostics if not status.ok and not status.required]
+    if failures:
+        print(f"{len(failures)} required check(s) failed.")
+    elif warnings:
+        print(f"All required checks passed; {len(warnings)} optional check(s) need attention.")
+    else:
+        print("All required checks passed.")
+
+
+def _doctor_marker(status) -> str:
+    if status.ok and status.severity == "warning":
+        return "[WARN]"
+    if status.ok:
+        return "[OK]"
+    if status.required:
+        return "[FAIL]"
+    return "[WARN]"
 
 
 if __name__ == "__main__":

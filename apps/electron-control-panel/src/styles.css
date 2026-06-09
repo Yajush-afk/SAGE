@@ -3,13 +3,16 @@
   --bg: #10110f;
   --panel: #191b17;
   --panel-2: #20231e;
+  --panel-3: #151711;
   --line: #34392f;
+  --line-strong: #4d5746;
   --text: #f0f3ea;
   --muted: #aab29f;
   --green: #9bd17b;
   --amber: #e0bc62;
   --red: #e56f5f;
   --blue: #7bb8d1;
+  --black: #10110f;
 }
 
 * { box-sizing: border-box; }
@@ -21,20 +24,42 @@ body {
   font-family: ui-monospace, "SFMono-Regular", "Cascadia Code", monospace;
 }
 
+button,
+input {
+  font: inherit;
+}
+
 button {
   align-items: center;
   background: var(--green);
   border: 0;
-  color: #10110f;
+  color: var(--black);
   cursor: pointer;
   display: inline-flex;
-  font: inherit;
   font-weight: 700;
   gap: 8px;
+  justify-content: center;
+  min-height: 40px;
   padding: 10px 14px;
 }
 
-button:disabled { opacity: .55; }
+button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+
+.secondaryButton,
+.demoButton,
+.iconButton {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+}
+
+.dangerButton {
+  background: var(--red);
+  color: var(--black);
+}
 
 .shell {
   display: grid;
@@ -68,7 +93,9 @@ button:disabled { opacity: .55; }
 .mark span,
 small,
 .topbar p,
-.metric span {
+.metric span,
+dt,
+.activityStrip span {
   color: var(--muted);
 }
 
@@ -102,6 +129,7 @@ nav a.active {
 
 h1,
 h2,
+h3,
 p {
   margin: 0;
 }
@@ -109,6 +137,116 @@ p {
 h1 {
   font-size: 28px;
   letter-spacing: 0;
+}
+
+h3 {
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 10px;
+  text-transform: uppercase;
+}
+
+.commandDeck {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 14px;
+}
+
+.commandForm {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(220px, 1fr) auto auto;
+}
+
+.commandInputWrap {
+  align-items: center;
+  background: var(--panel-3);
+  border: 1px solid var(--line);
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+  padding: 0 12px;
+}
+
+.commandInputWrap svg {
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+
+.commandInputWrap input {
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  min-height: 42px;
+  min-width: 0;
+  outline: 0;
+  width: 100%;
+}
+
+.activityStrip {
+  align-items: center;
+  background: var(--panel-3);
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  min-height: 42px;
+  padding: 10px 12px;
+}
+
+.activityStrip.listening,
+.activityStrip.sending,
+.activityStrip.thinking,
+.activityStrip.executing {
+  border-color: var(--blue);
+}
+
+.activityStrip.awaiting_confirmation {
+  border-color: var(--amber);
+}
+
+.activityStrip.failed {
+  border-color: var(--red);
+}
+
+.activityStrip svg {
+  color: var(--green);
+}
+
+.activityStrip.failed svg {
+  color: var(--red);
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.demoRail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.demoButton {
+  color: var(--muted);
+  min-height: 34px;
+  padding: 7px 10px;
+}
+
+.demoButton:hover:not(:disabled),
+.secondaryButton:hover:not(:disabled),
+.iconButton:hover:not(:disabled),
+.commandRow:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
 }
 
 .error {
@@ -151,10 +289,10 @@ h1 {
 .metric.good strong { color: var(--green); }
 .metric.bad strong { color: var(--red); }
 
-.grid {
+.mainGrid {
   display: grid;
   gap: 16px;
-  grid-template-columns: minmax(0, 1.3fr) minmax(320px, .7fr);
+  grid-template-columns: minmax(0, 1fr) minmax(380px, .9fr);
 }
 
 .panel {
@@ -172,7 +310,9 @@ h1 {
 
 .commandList,
 .diagnostics,
-.toolGrid {
+.toolGrid,
+.detailStack,
+.resultList {
   display: grid;
   gap: 8px;
 }
@@ -181,7 +321,10 @@ h1 {
 .diag,
 .tool,
 .workflow,
-.empty {
+.empty,
+.detailHeader,
+.confirmationBox,
+.resultRow {
   background: var(--panel-2);
   border: 1px solid var(--line);
   padding: 12px;
@@ -189,23 +332,89 @@ h1 {
 
 .commandRow {
   align-items: start;
+  color: inherit;
   display: grid;
   gap: 10px;
   grid-template-columns: 150px 1fr;
+  justify-content: stretch;
+  text-align: left;
+  width: 100%;
+}
+
+.commandRow.selected {
+  border-color: var(--green);
 }
 
 .status {
   color: var(--blue);
+  overflow-wrap: anywhere;
 }
 
 .status.failed,
-.status.blocked {
+.status.blocked,
+.status.cancelled {
   color: var(--red);
 }
 
 .status.completed,
-.status.planned {
+.status.planned,
+.status.confirmed {
   color: var(--green);
+}
+
+.status.awaiting_confirmation {
+  color: var(--amber);
+}
+
+.detailHeader {
+  display: grid;
+  gap: 6px;
+}
+
+.confirmationBox {
+  align-items: center;
+  border-color: var(--amber);
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.confirmActions {
+  display: flex;
+  gap: 8px;
+}
+
+.detailSection {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.detailGrid {
+  display: grid;
+  gap: 8px 12px;
+  grid-template-columns: 110px minmax(0, 1fr);
+  margin: 0;
+}
+
+dt,
+dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+dd {
+  color: var(--text);
+}
+
+.resultRow {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.errorText {
+  color: var(--red);
 }
 
 .diag {
@@ -216,6 +425,7 @@ h1 {
 
 .dot {
   display: block;
+  flex: 0 0 auto;
   height: 10px;
   width: 10px;
 }
@@ -239,15 +449,26 @@ small {
   overflow-wrap: anywhere;
 }
 
+@media (max-width: 1180px) {
+  .mainGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 980px) {
   .shell,
-  .grid,
-  .metrics {
+  .metrics,
+  .commandForm,
+  .confirmationBox {
     grid-template-columns: 1fr;
   }
 
   .sidebar {
     border-bottom: 1px solid var(--line);
     border-right: 0;
+  }
+
+  .confirmActions {
+    display: grid;
   }
 }

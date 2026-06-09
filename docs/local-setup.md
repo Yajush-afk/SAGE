@@ -170,8 +170,15 @@ Voice input:
 .venv/bin/sage diagnostics
 ```
 
-Current diagnostics report dependency status. The next implementation phase will
-make `sage doctor` more actionable by adding fix hints and clearer severity.
+`sage doctor` prints a human-readable local dependency report with fix hints.
+Use JSON output when scripting:
+
+```bash
+.venv/bin/sage doctor --json
+```
+
+`sage diagnostics` reads diagnostics through the running daemon API and returns
+JSON.
 
 ## Profile
 

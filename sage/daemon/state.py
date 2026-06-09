@@ -113,6 +113,9 @@ class DaemonState:
             return []
         return list(self._recent_commands)[-limit:][::-1]
 
+    def get_command(self, command_id: str) -> CommandRecord:
+        return self._find_command(command_id)
+
     def list_tools(self):
         return self._tool_registry.list_schemas()
 

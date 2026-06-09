@@ -205,6 +205,31 @@ def test_text_command_is_recorded_and_recent_commands_are_newest_first():
     ]
 
 
+def test_get_command_returns_existing_command():
+    client = make_client()
+    created = client.post(
+        "/commands/text",
+        json={"command_text": "what project is this", "source": "api"},
+    )
+
+    response = client.get(f"/commands/{created.json()['id']}")
+
+    assert created.status_code == 200
+    assert response.status_code == 200
+    assert response.json()["id"] == created.json()["id"]
+    assert response.json()["transcript"] == "what project is this"
+    assert response.json()["intent_plan"] is not None
+
+
+def test_get_unknown_command_returns_404():
+    client = make_client()
+
+    response = client.get("/commands/missing")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Command not found."
+
+
 def test_text_command_rejects_empty_command():
     client = make_client()
 

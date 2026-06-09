@@ -337,6 +337,9 @@ class DiagnosticStatus(SageModel):
     ok: bool
     detail: str
     required: bool = True
+    severity: Literal["ok", "warning", "error"] = "ok"
+    fix_hint: str = ""
+    docs_anchor: str = ""
 
 
 def export_contract_schemas() -> dict[str, dict[str, Any]]:

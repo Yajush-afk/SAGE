@@ -23,7 +23,7 @@ adding larger AI/platform features.
 
 ## Phase 1: Documentation, Setup, And Demo Baseline
 
-Status: in progress.
+Status: implemented.
 
 Goal:
 
@@ -40,38 +40,48 @@ Deliverables:
 
 ## Phase 2: Doctor, Diagnostics, And Setup Reliability
 
+Status: implemented.
+
 Goal:
 
 - make local dependency failures actionable.
 
-Planned:
+Deliverables:
 
 - diagnostic fix hints,
 - severity levels,
 - clearer human-readable `sage doctor`,
-- port conflict checks,
 - better docs links from diagnostics.
 
+Port preflight checks for daemon/UI/Whisper startup are kept for the later
+runtime supervision phase because they belong next to stack startup behavior.
+
 ## Phase 3: Command Auditability
+
+Status: implemented.
 
 Goal:
 
 - make every command inspectable end to end.
 
-Planned:
+Deliverables:
 
 - `GET /commands/{command_id}`,
 - `sage commands show <command-id>`,
-- command detail UI panel,
 - richer command detail types in the frontend.
 
+The visual command detail panel is kept for Phase 4 with the rest of the UI
+command interaction work.
+
 ## Phase 4: UI Command Input And Push-To-Talk UX
+
+Status: implemented.
 
 Goal:
 
 - make the control panel useful as an assistant surface, not only a dashboard.
 
-Planned:
+Deliverables:
 
 - text command input,
 - listen-once button,

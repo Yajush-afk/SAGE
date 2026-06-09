@@ -26,3 +26,4 @@ tmp/
 node_modules/
 apps/electron-control-panel/dist/
 apps/electron-control-panel/.vite/
+/docs/phase-2-completion-and-friday-comparison.md

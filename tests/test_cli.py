@@ -1,3 +1,5 @@
+import json
+
 from sage import __version__
 from sage.cli import main, request_json
 
@@ -108,6 +110,46 @@ def test_request_json_converts_timeout_to_runtime_error(monkeypatch):
         assert str(exc) == "SAGE daemon request timed out after 7 seconds"
     else:
         raise AssertionError("expected RuntimeError")
+
+
+def test_cli_commands_show_gets_command(monkeypatch, capsys):
+    calls = []
+
+    def fake_request_json(method, url, payload=None):
+        calls.append((method, url, payload))
+        return 200, {"id": "cmd_123", "status": "completed"}
+
+    monkeypatch.setattr("sage.cli.request_json", fake_request_json)
+
+    exit_code = main(
+        [
+            "commands",
+            "show",
+            "cmd_123",
+            "--url",
+            "http://daemon.local",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert calls == [("GET", "http://daemon.local/commands/cmd_123", None)]
+    assert '"id": "cmd_123"' in captured.out
+
+
+def test_cli_commands_show_returns_failure_for_missing_command(monkeypatch, capsys):
+    def fake_request_json(method, url, payload=None):
+        return 404, {"detail": "Command not found."}
+
+    monkeypatch.setattr("sage.cli.request_json", fake_request_json)
+
+    exit_code = main(["commands", "show", "missing", "--url", "http://daemon.local"])
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert '"detail": "Command not found."' in captured.out
 
 
 def test_cli_confirm_posts_confirmation_phrase(monkeypatch, capsys):
@@ -236,9 +278,22 @@ def test_cli_doctor_returns_failure_when_required_check_fails(monkeypatch, capsy
         def __init__(self, ok, required):
             self.ok = ok
             self.required = required
+            self.severity = "error" if not ok and required else "ok"
+            self.name = "ollama"
+            self.detail = "missing"
+            self.fix_hint = "Install Ollama."
+            self.docs_anchor = "docs/local-setup.md#ollama"
 
         def model_dump(self):
-            return {"name": "ollama", "ok": self.ok, "required": self.required, "detail": "missing"}
+            return {
+                "name": self.name,
+                "ok": self.ok,
+                "required": self.required,
+                "detail": self.detail,
+                "severity": self.severity,
+                "fix_hint": self.fix_hint,
+                "docs_anchor": self.docs_anchor,
+            }
 
     monkeypatch.setattr("sage.cli.load_runtime_settings", lambda: object())
     monkeypatch.setattr("sage.cli.run_diagnostics", lambda settings: [Diagnostic(False, True)])
@@ -248,4 +303,49 @@ def test_cli_doctor_returns_failure_when_required_check_fails(monkeypatch, capsy
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert '"required": true' in captured.out
+    assert "[FAIL] ollama (required)" in captured.out
+    assert "fix: Install Ollama." in captured.out
+    assert "1 required check(s) failed." in captured.out
+
+
+def test_cli_doctor_json_prints_raw_diagnostics(monkeypatch, capsys):
+    class Diagnostic:
+        ok = False
+        required = True
+        severity = "error"
+        name = "ollama"
+        detail = "missing"
+        fix_hint = "Install Ollama."
+        docs_anchor = "docs/local-setup.md#ollama"
+
+        def model_dump(self):
+            return {
+                "name": self.name,
+                "ok": self.ok,
+                "required": self.required,
+                "detail": self.detail,
+                "severity": self.severity,
+                "fix_hint": self.fix_hint,
+                "docs_anchor": self.docs_anchor,
+            }
+
+    monkeypatch.setattr("sage.cli.load_runtime_settings", lambda: object())
+    monkeypatch.setattr("sage.cli.run_diagnostics", lambda settings: [Diagnostic()])
+
+    exit_code = main(["doctor", "--json"])
+
+    captured = capsys.readouterr()
+    parsed = json.loads(captured.out)
+
+    assert exit_code == 1
+    assert parsed == [
+        {
+            "name": "ollama",
+            "ok": False,
+            "required": True,
+            "detail": "missing",
+            "severity": "error",
+            "fix_hint": "Install Ollama.",
+            "docs_anchor": "docs/local-setup.md#ollama",
+        }
+    ]

@@ -1,23 +1,75 @@
 export type Health = { status: string; version: string; service: string };
 
+export type ToolCall = {
+  tool_name: string;
+  arguments: Record<string, unknown>;
+};
+
+export type ToolResult = {
+  tool_name: string;
+  success: boolean;
+  summary: string;
+  details: string;
+  data: Record<string, unknown>;
+  duration_ms: number;
+};
+
 export type Command = {
   id: string;
   transcript: string;
   status: string;
   created_at: string;
+  source: string;
+  cwd?: string | null;
+  raw_audio_path?: string | null;
   error?: string | null;
+  transcription?: {
+    text: string;
+    confidence?: number | null;
+    duration_ms: number;
+    provider: string;
+  } | null;
   safety_decision?: {
+    action?: string;
+    risk?: string;
     reason: string;
     confirmation_phrase?: string | null;
+    expires_at?: string | null;
   } | null;
   execution_result?: {
+    command_id?: string;
     success: boolean;
     spoken_summary: string;
+    details?: string;
+    latency_ms?: number;
+    tool_results?: ToolResult[];
   } | null;
-  intent_plan?: { intent: string; summary: string; risk: string } | null;
+  speech_result?: {
+    success: boolean;
+    provider: string;
+    text: string;
+    audio_path?: string | null;
+    error?: string | null;
+  } | null;
+  intent_plan?: {
+    intent: string;
+    confidence?: number;
+    summary: string;
+    actions?: ToolCall[];
+    risk: string;
+    requires_confirmation?: boolean;
+  } | null;
 };
 
-export type Diagnostic = { name: string; ok: boolean; detail: string };
+export type Diagnostic = {
+  name: string;
+  ok: boolean;
+  detail: string;
+  required?: boolean;
+  severity?: "ok" | "warning" | "error";
+  fix_hint?: string;
+  docs_anchor?: string;
+};
 export type Tool = { name: string; description: string; risk: string };
 export type Workflow = { id: string; name: string; description: string; steps: unknown[] };
 export type StorageStats = {
@@ -43,6 +95,42 @@ async function fetchJson<T>(path: string): Promise<T> {
   const response = await fetch(`${API}${path}`);
   if (!response.ok) throw new Error(`${path}: ${response.status} ${response.statusText}`);
   return response.json() as Promise<T>;
+}
+
+async function postJson<T>(path: string, payload?: unknown): Promise<T> {
+  const response = await fetch(`${API}${path}`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json"
+    },
+    body: payload === undefined ? undefined : JSON.stringify(payload)
+  });
+  if (!response.ok) throw new Error(`${path}: ${response.status} ${response.statusText}`);
+  return response.json() as Promise<T>;
+}
+
+export async function loadCommand(commandId: string): Promise<Command> {
+  return fetchJson<Command>(`/commands/${commandId}`);
+}
+
+export async function sendTextCommand(commandText: string): Promise<Command> {
+  return postJson<Command>("/commands/text", {
+    command_text: commandText,
+    source: "api"
+  });
+}
+
+export async function listenOnce(): Promise<Command> {
+  return postJson<Command>("/commands/listen-once");
+}
+
+export async function confirmCommand(commandId: string, phrase: string): Promise<Command> {
+  return postJson<Command>(`/commands/${commandId}/confirm`, { phrase });
+}
+
+export async function cancelCommand(commandId: string): Promise<Command> {
+  return postJson<Command>(`/commands/${commandId}/cancel`);
 }
 
 async function safeFetch<T>(path: string, fallback: T): Promise<[T, string | null]> {
