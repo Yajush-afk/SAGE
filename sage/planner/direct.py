@@ -108,7 +108,18 @@ def direct_plan(transcript: str) -> IntentPlan | None:
             requires_confirmation=False,
         )
 
-    if normalized_text in {"git status", "show git status", "what changed", "repo status"}:
+    if normalized_text in {
+        "git status",
+        "show git status",
+        "what changed",
+        "what changed in this repo",
+        "what changed in this repository",
+        "repo status",
+        "repository status",
+        "working tree status",
+        "git changes",
+        "show git changes",
+    }:
         return IntentPlan(
             intent="get_git_status",
             confidence=1.0,

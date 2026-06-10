@@ -169,8 +169,11 @@ class CommandRecord(SageModel):
 
 
 class RuntimeSettings(SageModel):
+    planner_provider: Literal["ollama", "custom_http"] = "ollama"
     ollama_url: str = "http://127.0.0.1:11434"
     model_name: str = "gemma4"
+    planner_api_url: str | None = None
+    planner_api_key_env: str | None = None
     whisper_provider: str = "whisper_cpp"
     whisper_endpoint: str = "http://127.0.0.1:2022/v1"
     whisper_cli_path: str = "whisper-cli"
@@ -198,8 +201,11 @@ class RuntimeSettings(SageModel):
 
 
 class RuntimeSettingsUpdate(SageModel):
+    planner_provider: Literal["ollama", "custom_http"] | None = None
     ollama_url: str | None = None
     model_name: str | None = None
+    planner_api_url: str | None = None
+    planner_api_key_env: str | None = None
     whisper_provider: str | None = None
     whisper_endpoint: str | None = None
     whisper_cli_path: str | None = None

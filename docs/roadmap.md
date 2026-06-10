@@ -136,6 +136,24 @@ Deliverables:
 - mixed-risk handling,
 - combined project-aware summaries.
 
+## Pre-Phase 8: Planner Reliability And Low-Resource Mode
+
+Status: implemented.
+
+Goal:
+
+- make SAGE less dependent on one large Ollama model before adding workflows.
+
+Deliverables:
+
+- user-friendly Ollama runner crash messages,
+- low-resource Ollama diagnostics and setup guidance,
+- planner output normalization for common model aliases,
+- injected planner chat-provider boundary,
+- future custom-provider settings without changing tool execution,
+- direct-planner coverage for common git status phrasing,
+- tests for planner/provider/diagnostic failure paths.
+
 ## Phase 8: Runnable Workflows
 
 Goal:

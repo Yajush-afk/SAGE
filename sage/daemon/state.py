@@ -329,6 +329,11 @@ class DaemonState:
         direct = direct_plan(transcript)
         if direct is not None:
             return direct
+        if self._settings.planner_provider != "ollama":
+            raise PlannerError(
+                f"planner_provider={self._settings.planner_provider} is configured, "
+                "but only ollama is implemented right now."
+            )
         context = PlannerContext(
             cwd=cwd,
             assistant_profile=self._profile,

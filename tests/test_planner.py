@@ -6,7 +6,13 @@ from pydantic import ValidationError
 
 from sage.context import generate_assistant_profile
 from sage.contracts import PlannerContext, RiskLevel, RuntimeSettings
-from sage.planner import OllamaPlanner, PlannerError, build_planner_messages, parse_intent_plan
+from sage.planner import (
+    OllamaPlanner,
+    PlannerError,
+    build_planner_messages,
+    format_ollama_error,
+    parse_intent_plan,
+)
 from sage.planner.ollama import normalize_planner_payload
 
 
@@ -67,6 +73,47 @@ def test_parse_intent_plan_normalizes_tool_input_to_arguments():
     assert plan.intent == "get_laptop_specs"
     assert plan.actions[0].tool_name == "get_system_info"
     assert plan.actions[0].arguments == {}
+
+
+def test_parse_intent_plan_normalizes_common_model_aliases():
+    plan = parse_intent_plan(
+        json.dumps(
+            {
+                "intent": "inspect_project",
+                "confidence": "0.8",
+                "summary": "Inspect project.",
+                "tool_calls": [
+                    {
+                        "name": "detect_project",
+                        "args": {},
+                    }
+                ],
+                "risk": "read",
+                "requires_confirmation": False,
+            }
+        )
+    )
+
+    assert plan.risk == RiskLevel.READ_ONLY
+    assert plan.actions[0].tool_name == "detect_project"
+    assert plan.actions[0].arguments == {}
+
+
+def test_parse_intent_plan_normalizes_top_level_tool_call():
+    plan = parse_intent_plan(
+        json.dumps(
+            {
+                "tool_name": "get_memory_info",
+                "confidence": 0.9,
+                "risk": "read_only",
+                "requires_confirmation": False,
+            }
+        )
+    )
+
+    assert plan.intent == "get_memory_info"
+    assert plan.summary == "Run get_memory_info."
+    assert plan.actions[0].tool_name == "get_memory_info"
 
 
 def test_normalize_planner_payload_does_not_mutate_input():
@@ -181,6 +228,41 @@ def test_ollama_planner_sends_schema_and_parses_response(monkeypatch, tmp_path):
     assert captured["timeout"] == 120
 
 
+def test_ollama_planner_uses_injected_chat_provider(tmp_path):
+    class FakeChatProvider:
+        def chat(self, messages, settings, response_schema):
+            assert messages
+            assert response_schema["title"] == "IntentPlan"
+            assert settings.model_name == "tiny-planner"
+            return json.dumps(
+                {
+                    "intent": "inspect_project",
+                    "confidence": 0.9,
+                    "summary": "Inspect project.",
+                    "actions": [{"tool_name": "detect_project", "arguments": {}}],
+                    "risk": "read_only",
+                    "requires_confirmation": False,
+                }
+            )
+
+    context = PlannerContext(
+        cwd=tmp_path,
+        assistant_profile=generate_assistant_profile(),
+        available_tools=[],
+        safety_rules_summary="No execution.",
+        recent_commands=[],
+    )
+
+    plan = OllamaPlanner(chat_provider=FakeChatProvider()).plan(
+        "inspect project",
+        context,
+        RuntimeSettings(model_name="tiny-planner"),
+    )
+
+    assert plan.intent == "inspect_project"
+    assert plan.actions[0].tool_name == "detect_project"
+
+
 def test_ollama_planner_repairs_invalid_output(monkeypatch, tmp_path):
     responses = [
         {"message": {"content": '{"intent": "broken"}'}},
@@ -250,3 +332,15 @@ def test_ollama_planner_reports_connection_failure(monkeypatch, tmp_path):
 
     with pytest.raises(PlannerError, match="could not reach Ollama"):
         OllamaPlanner().plan("start frontend", context, RuntimeSettings())
+
+
+def test_format_ollama_error_explains_probable_memory_pressure():
+    message = format_ollama_error(
+        500,
+        '{"error":"llama runner process has terminated: %!w(<nil>)"}',
+        RuntimeSettings(model_name="gemma4:e4b", ollama_num_ctx=4096, ollama_keep_alive="5m"),
+    )
+
+    assert "memory pressure" in message
+    assert "gemma4:e4b" in message
+    assert "ollama_num_ctx" in message

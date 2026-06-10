@@ -344,6 +344,9 @@ def test_settings_can_be_read_and_updated():
             "keep_raw_audio": True,
             "ollama_num_ctx": 8192,
             "whisper_timeout_seconds": 60,
+            "planner_provider": "custom_http",
+            "planner_api_url": "https://planner.example.test/v1/chat",
+            "planner_api_key_env": "SAGE_PLANNER_API_KEY",
         },
     )
 
@@ -357,6 +360,28 @@ def test_settings_can_be_read_and_updated():
     assert updated.json()["keep_raw_audio"] is True
     assert updated.json()["ollama_num_ctx"] == 8192
     assert updated.json()["whisper_timeout_seconds"] == 60
+    assert updated.json()["planner_provider"] == "custom_http"
+    assert updated.json()["planner_api_key_env"] == "SAGE_PLANNER_API_KEY"
+
+
+def test_unimplemented_planner_provider_fails_for_llm_fallback_commands(tmp_path):
+    state = make_state()
+    state.update_settings(RuntimeSettingsUpdate(planner_provider="custom_http"))
+    client = make_client(state)
+
+    response = client.post(
+        "/commands/text",
+        json={
+            "command_text": "please handle this unknown request",
+            "source": "api",
+            "cwd": str(tmp_path),
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "failed"
+    assert "only ollama is implemented" in body["error"]
 
 
 def test_settings_update_validates_bounds():

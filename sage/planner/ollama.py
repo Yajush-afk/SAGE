@@ -25,37 +25,31 @@ class Planner(Protocol):
         ...
 
 
-class OllamaPlanner:
-    """Ask Ollama for an IntentPlan and validate the result strictly."""
-
-    def plan(
+class PlannerChatProvider(Protocol):
+    def chat(
         self,
-        transcript: str,
-        context: PlannerContext,
+        messages: list[dict[str, str]],
         settings: RuntimeSettings,
-    ) -> IntentPlan:
-        messages = build_planner_messages(transcript, context)
-        last_error: Exception | None = None
+        response_schema: dict,
+    ) -> str:
+        ...
 
-        for attempt in range(settings.planner_repair_attempts + 1):
-            if attempt > 0:
-                messages = build_repair_messages(transcript, context, str(last_error))
 
-            raw_content = self._chat(messages, settings)
-            try:
-                return parse_intent_plan(raw_content)
-            except (json.JSONDecodeError, ValidationError, PlannerError) as exc:
-                last_error = exc
+class OllamaChatProvider:
+    """HTTP adapter for Ollama's chat API."""
 
-        raise PlannerError(f"Ollama returned invalid planner output: {last_error}")
-
-    def _chat(self, messages: list[dict[str, str]], settings: RuntimeSettings) -> str:
+    def chat(
+        self,
+        messages: list[dict[str, str]],
+        settings: RuntimeSettings,
+        response_schema: dict,
+    ) -> str:
         endpoint = f"{settings.ollama_url.rstrip('/')}/api/chat"
         payload = {
             "model": settings.model_name,
             "messages": messages,
             "stream": False,
-            "format": IntentPlan.model_json_schema(),
+            "format": response_schema,
             "keep_alive": settings.ollama_keep_alive,
             "options": {
                 "temperature": 0,
@@ -78,7 +72,7 @@ class OllamaPlanner:
         except error.HTTPError as exc:
             error_body = exc.read().decode()
             detail = error_body or exc.reason
-            raise PlannerError(f"Ollama request failed with HTTP {exc.code}: {detail}") from exc
+            raise PlannerError(format_ollama_error(exc.code, detail, settings)) from exc
         except error.URLError as exc:
             raise PlannerError(f"could not reach Ollama at {settings.ollama_url}: {exc}") from exc
 
@@ -96,6 +90,38 @@ class OllamaPlanner:
             return response_content
 
         raise PlannerError("Ollama response did not include planner content")
+
+
+class OllamaPlanner:
+    """Ask Ollama for an IntentPlan and validate the result strictly."""
+
+    def __init__(self, chat_provider: PlannerChatProvider | None = None) -> None:
+        self._chat_provider = chat_provider or OllamaChatProvider()
+
+    def plan(
+        self,
+        transcript: str,
+        context: PlannerContext,
+        settings: RuntimeSettings,
+    ) -> IntentPlan:
+        messages = build_planner_messages(transcript, context)
+        last_error: Exception | None = None
+
+        for attempt in range(settings.planner_repair_attempts + 1):
+            if attempt > 0:
+                messages = build_repair_messages(transcript, context, str(last_error))
+
+            raw_content = self._chat_provider.chat(
+                messages,
+                settings,
+                IntentPlan.model_json_schema(),
+            )
+            try:
+                return parse_intent_plan(raw_content)
+            except (json.JSONDecodeError, ValidationError, PlannerError) as exc:
+                last_error = exc
+
+        raise PlannerError(f"Ollama returned invalid planner output: {last_error}")
 
 
 def build_planner_messages(transcript: str, context: PlannerContext) -> list[dict[str, str]]:
@@ -155,18 +181,82 @@ def build_repair_messages(
 
 
 def normalize_planner_payload(parsed: dict) -> dict:
+    parsed = dict(parsed)
+
+    if "intent" not in parsed and isinstance(parsed.get("tool_name"), str):
+        parsed["intent"] = parsed["tool_name"]
+    if "summary" not in parsed and isinstance(parsed.get("intent"), str):
+        parsed["summary"] = f"Run {parsed['intent']}."
+
+    if "risk" in parsed and isinstance(parsed["risk"], str):
+        parsed["risk"] = _normalize_risk(parsed["risk"])
+
+    if "actions" not in parsed and "tool_calls" in parsed:
+        parsed["actions"] = parsed.pop("tool_calls")
+    if "actions" not in parsed and isinstance(parsed.get("tool_name"), str):
+        arguments = parsed.pop("arguments", {})
+        parsed["actions"] = [{"tool_name": parsed.pop("tool_name"), "arguments": arguments}]
+
     actions = parsed.get("actions")
+    if isinstance(actions, dict):
+        actions = [actions]
     if isinstance(actions, list):
         normalized_actions = []
         for action in actions:
             if isinstance(action, dict):
                 action = dict(action)
-                if "arguments" not in action and "tool_input" in action:
-                    action["arguments"] = action.pop("tool_input")
+                if "tool_name" not in action:
+                    for alias in ("name", "tool", "toolName"):
+                        if alias in action:
+                            action["tool_name"] = action.pop(alias)
+                            break
+                if "arguments" not in action:
+                    for alias in ("tool_input", "args", "input", "parameters"):
+                        if alias in action:
+                            action["arguments"] = action.pop(alias)
+                            break
+                if "arguments" not in action:
+                    action["arguments"] = {}
             normalized_actions.append(action)
-        parsed = dict(parsed)
         parsed["actions"] = normalized_actions
     return parsed
+
+
+def format_ollama_error(status_code: int, detail: str, settings: RuntimeSettings) -> str:
+    normalized = detail.lower()
+    memory_indicators = (
+        "llama runner process has terminated",
+        "out of memory",
+        "oom",
+        "killed",
+        "memory",
+        "cuda error",
+    )
+    if status_code >= 500 and any(indicator in normalized for indicator in memory_indicators):
+        return (
+            "Ollama model runner crashed, likely due to memory pressure. "
+            f"Configured model: {settings.model_name}, ollama_num_ctx: {settings.ollama_num_ctx}, "
+            f"keep_alive: {settings.ollama_keep_alive}. Use a smaller planner model, "
+            "lower ollama_num_ctx, or shorten ollama_keep_alive."
+        )
+    return f"Ollama request failed with HTTP {status_code}: {detail}"
+
+
+def _normalize_risk(value: str) -> str:
+    normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "read": "read_only",
+        "readonly": "read_only",
+        "safe": "safe_execution",
+        "safe_exec": "safe_execution",
+        "execute": "safe_execution",
+        "state_change": "state_changing",
+        "stateful": "state_changing",
+        "dangerous": "destructive",
+        "admin": "privileged",
+        "sudo": "privileged",
+    }
+    return aliases.get(normalized, normalized)
 
 
 def parse_intent_plan(raw_content: str) -> IntentPlan:

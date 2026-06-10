@@ -151,6 +151,18 @@ def test_runtime_settings_accepts_audio_and_stt_settings():
     assert settings.whisper_timeout_seconds == 60
 
 
+def test_runtime_settings_accepts_future_planner_provider_settings():
+    settings = RuntimeSettings(
+        planner_provider="custom_http",
+        planner_api_url="https://planner.example.test/v1/chat",
+        planner_api_key_env="SAGE_PLANNER_API_KEY",
+    )
+
+    assert settings.planner_provider == "custom_http"
+    assert settings.planner_api_url == "https://planner.example.test/v1/chat"
+    assert settings.planner_api_key_env == "SAGE_PLANNER_API_KEY"
+
+
 def test_planner_context_accepts_minimal_context(tmp_path):
     from sage.context import generate_assistant_profile
 

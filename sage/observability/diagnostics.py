@@ -14,6 +14,7 @@ DOCS_SETUP = "docs/local-setup.md"
 
 def run_diagnostics(settings: RuntimeSettings) -> list[DiagnosticStatus]:
     return [
+        _planner_provider_status(settings),
         _binary_status(
             "ffmpeg",
             fix_hint="Install ffmpeg with your system package manager.",
@@ -30,6 +31,7 @@ def run_diagnostics(settings: RuntimeSettings) -> list[DiagnosticStatus]:
             docs_anchor=f"{DOCS_SETUP}#ollama",
         ),
         _ollama_model_status(settings.model_name),
+        _ollama_resource_profile_status(settings),
         _whisper_endpoint_status(
             settings.whisper_endpoint,
             required=settings.whisper_provider in {"whisper_cpp", "whisper_cpp_http"},
@@ -88,6 +90,30 @@ def run_diagnostics(settings: RuntimeSettings) -> list[DiagnosticStatus]:
             docs_anchor=f"{DOCS_SETUP}#piper",
         ),
     ]
+
+
+def _planner_provider_status(settings: RuntimeSettings) -> DiagnosticStatus:
+    if settings.planner_provider == "ollama":
+        return DiagnosticStatus(
+            name="planner_provider",
+            ok=True,
+            detail="ollama",
+            required=True,
+            severity="ok",
+            docs_anchor=f"{DOCS_SETUP}#ollama",
+        )
+    return DiagnosticStatus(
+        name="planner_provider",
+        ok=False,
+        detail=f"{settings.planner_provider} is configured but not implemented yet",
+        required=True,
+        severity="error",
+        fix_hint=(
+            "Use planner_provider=ollama for now. Custom HTTP provider settings are "
+            "reserved for the provider phase."
+        ),
+        docs_anchor=f"{DOCS_SETUP}#manual-local-wiring",
+    )
 
 
 def _binary_status(
@@ -173,6 +199,45 @@ def _ollama_model_status(model_name: str) -> DiagnosticStatus:
         fix_hint="" if installed else f"Run `ollama pull {model_name}`.",
         docs_anchor=f"{DOCS_SETUP}#ollama",
     )
+
+
+def _ollama_resource_profile_status(settings: RuntimeSettings) -> DiagnosticStatus:
+    warnings: list[str] = []
+    model = settings.model_name.lower()
+    heavy_model_markers = ("gemma4", "70b", "32b", "14b", "13b", "8b")
+    if any(marker in model for marker in heavy_model_markers):
+        warnings.append(f"{settings.model_name} may be heavy for SAGE planner use")
+    if settings.ollama_num_ctx > 2048:
+        warnings.append(f"ollama_num_ctx is {settings.ollama_num_ctx}; 1024-2048 is enough")
+    if not _is_short_keep_alive(settings.ollama_keep_alive):
+        warnings.append(f"ollama_keep_alive is {settings.ollama_keep_alive}; 0s-30s reduces RAM")
+
+    ok = not warnings
+    return DiagnosticStatus(
+        name="ollama_resource_profile",
+        ok=ok,
+        detail="; ".join(warnings) if warnings else "planner resource profile is lightweight",
+        required=False,
+        severity="ok" if ok else "warning",
+        fix_hint="" if ok else (
+            "For this laptop, use a smaller planner model such as qwen2.5:1.5b or "
+            "qwen2.5:3b, set ollama_num_ctx to 1024-2048, and set ollama_keep_alive "
+            "to 0s-30s."
+        ),
+        docs_anchor=f"{DOCS_SETUP}#ollama",
+    )
+
+
+def _is_short_keep_alive(value: str) -> bool:
+    normalized = value.strip().lower()
+    if normalized in {"0", "0s", "off"}:
+        return True
+    if normalized.endswith("s"):
+        try:
+            return int(normalized[:-1]) <= 30
+        except ValueError:
+            return False
+    return False
 
 
 def _model_is_listed(model_name: str, output: str) -> bool:

@@ -84,6 +84,13 @@ def test_direct_planner_detects_git_status_request():
     assert plan.actions[0].tool_name == "get_git_status"
 
 
+def test_direct_planner_detects_common_git_change_request():
+    plan = direct_plan("what changed in this repo")
+
+    assert plan.intent == "get_git_status"
+    assert plan.actions[0].tool_name == "get_git_status"
+
+
 def test_direct_planner_detects_project_file_listing_request():
     plan = direct_plan("list project files")
 

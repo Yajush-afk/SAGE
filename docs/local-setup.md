@@ -60,6 +60,19 @@ ollama pull gemma4
 If you use a different model, update runtime settings through the daemon
 settings API once the daemon is running.
 
+For a lower-RAM laptop profile, use a smaller planner model and shorter model
+residency:
+
+```bash
+ollama pull qwen2.5:3b
+curl -X PUT http://127.0.0.1:8765/settings \
+  -H 'Content-Type: application/json' \
+  -d '{"model_name":"qwen2.5:3b","ollama_num_ctx":2048,"ollama_keep_alive":"30s"}'
+```
+
+For the lightest local profile, use `qwen2.5:1.5b`, `ollama_num_ctx: 1024`,
+and `ollama_keep_alive: "0s"`.
+
 ### Whisper.cpp
 
 SAGE defaults to a Whisper.cpp/OpenAI-compatible HTTP endpoint:

@@ -142,6 +142,11 @@ def _clean_error(error: str | None) -> str:
         return ""
     if "No executable tool actions." in error or "no registered executable tool" in error:
         return NO_TOOL_MESSAGE
+    if "Ollama model runner crashed" in error:
+        return (
+            "The local planner model crashed, likely from memory pressure. "
+            "Use a smaller model or lower Ollama context settings."
+        )
     if "Ollama returned invalid planner output" in error:
         return "I couldn't turn that into a valid tool plan yet."
     return _shorten(error)
