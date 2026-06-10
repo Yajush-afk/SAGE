@@ -91,11 +91,13 @@ Deliverables:
 
 ## Phase 5: Spoken Response And Voice Confirmation UX
 
+Status: implemented.
+
 Goal:
 
 - make voice responses short, natural, and safety-aware.
 
-Planned:
+Deliverables:
 
 - response formatter,
 - clearer failed/unsupported command summaries,
@@ -104,11 +106,13 @@ Planned:
 
 ## Phase 6: Project Context Tools
 
+Status: implemented.
+
 Goal:
 
 - improve repo awareness through deterministic read-only tools.
 
-Planned:
+Deliverables:
 
 - git status tool,
 - project file listing,
@@ -118,16 +122,19 @@ Planned:
 
 ## Phase 7: Multi-Tool Execution
 
+Status: implemented.
+
 Goal:
 
 - support controlled typed tool composition.
 
-Planned:
+Deliverables:
 
-- sequential multi-action execution,
-- ordered result persistence,
+- deterministic project-overview commands that compose read-only project tools,
+- sequential multi-action execution with ordered result persistence,
+- read-only step failures continue to collect later read-only results,
 - mixed-risk handling,
-- combined summaries.
+- combined project-aware summaries.
 
 ## Phase 8: Runnable Workflows
 

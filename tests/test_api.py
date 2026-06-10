@@ -33,10 +33,13 @@ class FakeRecorder:
 
 
 class FakeSTTProvider:
+    def __init__(self, text: str = "start the frontend") -> None:
+        self.text = text
+
     def transcribe(self, audio_path, settings: RuntimeSettings) -> TranscriptionResult:
         assert audio_path.exists()
         return TranscriptionResult(
-            text="start the frontend",
+            text=self.text,
             confidence=None,
             duration_ms=10,
             provider="fake_stt",
@@ -129,6 +132,26 @@ class UnknownIntentMissingActionPlanner:
             confidence=0.7,
             summary="No executable tool selected.",
             actions=[],
+            risk=RiskLevel.READ_ONLY,
+            requires_confirmation=False,
+        )
+
+
+class ReadOnlyFailureThenSuccessPlanner:
+    def plan(
+        self,
+        transcript: str,
+        context: PlannerContext,
+        settings: RuntimeSettings,
+    ) -> IntentPlan:
+        return IntentPlan(
+            intent="partial_read_only_plan",
+            confidence=0.9,
+            summary="Run a read-only plan with one failing step.",
+            actions=[
+                ToolCall(tool_name="show_file_excerpt", arguments={"path": "missing.md"}),
+                ToolCall(tool_name="detect_project", arguments={}),
+            ],
             risk=RiskLevel.READ_ONLY,
             requires_confirmation=False,
         )
@@ -382,7 +405,7 @@ def test_confirm_command_accepts_required_phrase():
 
     assert confirmed.status_code == 200
     assert confirmed.json()["status"] == "failed"
-    assert "no registered executable tool" in confirmed.json()["error"]
+    assert "no registered tool can handle" in confirmed.json()["error"]
 
 
 def test_confirm_command_rejects_wrong_phrase():
@@ -417,6 +440,46 @@ def test_cancel_command_updates_status():
 
     assert cancelled.status_code == 200
     assert cancelled.json()["status"] == "cancelled"
+
+
+def test_text_confirmation_phrase_confirms_latest_pending_command():
+    client = make_client()
+    planned = client.post(
+        "/commands/text",
+        json={"command_text": "start the frontend", "source": "api"},
+    )
+
+    confirmed = client.post(
+        "/commands/text",
+        json={"command_text": "confirm start", "source": "api"},
+    )
+
+    assert confirmed.status_code == 200
+    assert confirmed.json()["id"] == planned.json()["id"]
+    assert confirmed.json()["status"] == "failed"
+    assert "no registered tool can handle" in confirmed.json()["speech_result"]["text"]
+
+
+def test_listen_once_confirmation_phrase_confirms_latest_pending_command(tmp_path):
+    audio_path = tmp_path / "command.wav"
+    state = make_state(
+        recorder=FakeRecorder(audio_path),
+        stt_provider=FakeSTTProvider("confirm start"),
+        planner=FakePlanner(),
+    )
+    client = make_client(state)
+    planned = client.post(
+        "/commands/text",
+        json={"command_text": "start the frontend", "source": "api"},
+    )
+
+    confirmed = client.post("/commands/listen-once")
+    recent = client.get("/commands/recent?limit=5")
+
+    assert confirmed.status_code == 200
+    assert confirmed.json()["id"] == planned.json()["id"]
+    assert confirmed.json()["status"] == "failed"
+    assert [record["id"] for record in recent.json()].count(planned.json()["id"]) == 1
 
 
 def test_confirm_unknown_command_returns_404():
@@ -458,8 +521,8 @@ def test_executed_tool_summary_is_spoken(tmp_path):
     body = response.json()
     assert body["status"] == "completed"
     assert body["execution_result"]["tool_results"][0]["tool_name"] == "get_system_info"
-    assert body["execution_result"]["spoken_summary"].startswith("You are on ")
-    assert body["speech_result"]["text"].startswith("You are on ")
+    assert body["execution_result"]["spoken_summary"].startswith("This laptop is running ")
+    assert body["speech_result"]["text"].startswith("This laptop is running ")
 
 
 def test_memory_question_uses_direct_tool_without_planner(tmp_path):
@@ -499,7 +562,8 @@ def test_identity_question_uses_stored_profile(tmp_path):
     assert response.status_code == 200
     body = response.json()
     assert body["intent_plan"]["intent"] == "get_assistant_profile"
-    assert "Laptop Sage" in body["speech_result"]["text"]
+    assert body["speech_result"]["text"].startswith("I'm Laptop Sage")
+    assert "currently registered capabilities" not in body["speech_result"]["text"]
     assert body["execution_result"]["tool_results"][0]["data"]["capabilities"]
 
 
@@ -520,7 +584,60 @@ def test_identity_and_capability_question_uses_direct_profile_tool(tmp_path):
     assert body["status"] == "completed"
     assert body["intent_plan"]["intent"] == "get_assistant_profile"
     assert body["intent_plan"]["actions"][0]["tool_name"] == "get_assistant_profile"
-    assert "currently registered capabilities" in body["speech_result"]["text"]
+    assert "inspect projects" in body["speech_result"]["text"]
+
+
+def test_project_overview_uses_multi_tool_direct_plan(tmp_path):
+    (tmp_path / "README.md").write_text("# Demo\n")
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo-project'\n")
+    client = make_client(make_state())
+
+    response = client.post(
+        "/commands/text",
+        json={
+            "command_text": "inspect this repo",
+            "source": "api",
+            "cwd": str(tmp_path),
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "completed"
+    assert body["intent_plan"]["intent"] == "project_overview"
+    assert [result["tool_name"] for result in body["execution_result"]["tool_results"]] == [
+        "detect_project",
+        "get_project_summary",
+        "get_git_status",
+        "list_project_files",
+    ]
+    assert body["execution_result"]["spoken_summary"].startswith("Project overview for")
+    assert "listed file" in body["speech_result"]["text"]
+
+
+def test_read_only_multi_tool_plan_continues_after_step_failure(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n")
+    client = make_client(make_state(planner=ReadOnlyFailureThenSuccessPlanner()))
+
+    response = client.post(
+        "/commands/text",
+        json={
+            "command_text": "run partial read-only plan",
+            "source": "api",
+            "cwd": str(tmp_path),
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    results = body["execution_result"]["tool_results"]
+    assert body["status"] == "failed"
+    assert [result["tool_name"] for result in results] == [
+        "show_file_excerpt",
+        "detect_project",
+    ]
+    assert results[0]["success"] is False
+    assert results[1]["success"] is True
 
 
 def test_known_zero_arg_intent_without_action_is_repaired(tmp_path):
@@ -556,8 +673,10 @@ def test_unknown_zero_action_plan_fails_instead_of_remaining_planned(tmp_path):
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "failed"
-    assert "no registered executable tool" in body["error"]
-    assert body["speech_result"]["text"].startswith("Failed.")
+    assert "no registered tool can handle" in body["error"]
+    assert body["speech_result"]["text"] == (
+        "Failed. I can't do that yet because no registered tool can handle this request."
+    )
 
 
 def test_unknown_tool_is_blocked(tmp_path):

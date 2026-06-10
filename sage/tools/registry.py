@@ -186,6 +186,183 @@ class SearchProjectTextTool(BaseTool):
         )
 
 
+class GetGitStatusArgs(BaseModel):
+    cwd: Path | None = None
+
+
+class GetGitStatusTool(BaseTool):
+    name = "get_git_status"
+    description = "Report current git branch and short working tree status."
+    risk = RiskLevel.READ_ONLY
+    args_model = GetGitStatusArgs
+
+    def run(self, args: GetGitStatusArgs, context: ExecutionContext) -> ToolResult:
+        started_at = time.monotonic()
+        cwd = context.resolve_path(args.cwd)
+        branch = _run_git(cwd, ["branch", "--show-current"], context.timeout_seconds)
+        status = _run_git(cwd, ["status", "--short"], context.timeout_seconds)
+        if branch is None and status is None:
+            data = {"cwd": str(cwd), "is_git_repo": False, "branch": None, "status": []}
+            return ToolResult(
+                tool_name=self.name,
+                success=True,
+                summary="This workspace is not a git repository.",
+                data=data,
+                duration_ms=_elapsed_ms(started_at),
+            )
+
+        status_lines = status.splitlines() if status else []
+        data = {
+            "cwd": str(cwd),
+            "is_git_repo": True,
+            "branch": branch.strip() if branch and branch.strip() else "detached",
+            "status": status_lines[:50],
+            "changed_count": len(status_lines),
+        }
+        summary = (
+            f"Git branch {data['branch']} has {data['changed_count']} changed file(s)."
+            if status_lines
+            else f"Git branch {data['branch']} is clean."
+        )
+        return ToolResult(
+            tool_name=self.name,
+            success=True,
+            summary=summary,
+            data=data,
+            duration_ms=_elapsed_ms(started_at),
+        )
+
+
+class ListProjectFilesArgs(BaseModel):
+    cwd: Path | None = None
+    max_files: int = Field(default=80, ge=1, le=300)
+    max_depth: int = Field(default=3, ge=1, le=8)
+
+
+class ListProjectFilesTool(BaseTool):
+    name = "list_project_files"
+    description = "List project files under the current workspace with depth and count limits."
+    risk = RiskLevel.READ_ONLY
+    args_model = ListProjectFilesArgs
+
+    def run(self, args: ListProjectFilesArgs, context: ExecutionContext) -> ToolResult:
+        started_at = time.monotonic()
+        cwd = context.resolve_path(args.cwd)
+        files = _project_files(cwd, max_files=args.max_files, max_depth=args.max_depth)
+        return ToolResult(
+            tool_name=self.name,
+            success=True,
+            summary=f"Listed {len(files)} project file(s).",
+            data={"cwd": str(cwd), "files": files},
+            duration_ms=_elapsed_ms(started_at),
+        )
+
+
+class ShowFileExcerptArgs(BaseModel):
+    path: Path
+    cwd: Path | None = None
+    max_lines: int = Field(default=80, ge=1, le=200)
+    max_chars: int = Field(default=8000, ge=200, le=20000)
+
+
+class ShowFileExcerptTool(BaseTool):
+    name = "show_file_excerpt"
+    description = "Show a bounded text excerpt from a file inside the current workspace."
+    risk = RiskLevel.READ_ONLY
+    args_model = ShowFileExcerptArgs
+
+    def run(self, args: ShowFileExcerptArgs, context: ExecutionContext) -> ToolResult:
+        started_at = time.monotonic()
+        cwd = context.resolve_path(args.cwd)
+        path = ExecutionContext(
+            command_id=context.command_id,
+            cwd=cwd,
+            timeout_seconds=context.timeout_seconds,
+            assistant_profile=context.assistant_profile,
+            available_tools=context.available_tools,
+        ).resolve_path(args.path)
+        if not path.exists():
+            raise ToolExecutionError(f"file does not exist: {path}")
+        if not path.is_file():
+            raise ToolExecutionError(f"path is not a file: {path}")
+        if _is_binary_file(path):
+            raise ToolExecutionError(f"file appears to be binary: {path}")
+
+        text = path.read_text(errors="replace")
+        lines = text.splitlines()[: args.max_lines]
+        excerpt = "\n".join(lines)[: args.max_chars]
+        relative_path = str(path.relative_to(cwd))
+        return ToolResult(
+            tool_name=self.name,
+            success=True,
+            summary=f"Read {min(len(lines), args.max_lines)} line(s) from {relative_path}.",
+            data={
+                "cwd": str(cwd),
+                "path": relative_path,
+                "excerpt": excerpt,
+                "line_count": len(lines),
+                "truncated": len(text) > len(excerpt) or len(text.splitlines()) > len(lines),
+            },
+            duration_ms=_elapsed_ms(started_at),
+        )
+
+
+class GetProjectContextArgs(BaseModel):
+    cwd: Path | None = None
+    max_files: int = Field(default=60, ge=1, le=200)
+
+
+class GetProjectContextTool(BaseTool):
+    name = "get_project_context"
+    description = "Build a bounded read-only context bundle for the current project."
+    risk = RiskLevel.READ_ONLY
+    args_model = GetProjectContextArgs
+
+    def run(self, args: GetProjectContextArgs, context: ExecutionContext) -> ToolResult:
+        started_at = time.monotonic()
+        cwd = context.resolve_path(args.cwd)
+        markers = _project_markers(cwd)
+        package = _package_metadata(cwd)
+        pyproject = _pyproject_metadata(cwd)
+        git_branch = _run_git(cwd, ["branch", "--show-current"], context.timeout_seconds)
+        git_status = _run_git(cwd, ["status", "--short"], context.timeout_seconds)
+        files = _project_files(cwd, max_files=args.max_files, max_depth=3)
+        readme_excerpt = _first_existing_excerpt(
+            [cwd / "README.md", cwd / "readme.md", cwd / "README.rst"],
+            max_chars=1600,
+        )
+        scripts = package.get("scripts", {}) if isinstance(package.get("scripts"), dict) else {}
+        test_commands = _test_command_candidates(markers, scripts)
+        data = {
+            "cwd": str(cwd),
+            "name": package.get("name") or pyproject.get("name") or cwd.name,
+            "markers": markers,
+            "package": package,
+            "pyproject": pyproject,
+            "git": {
+                "is_git_repo": git_branch is not None or git_status is not None,
+                "branch": git_branch.strip() if git_branch and git_branch.strip() else None,
+                "changed_count": len(git_status.splitlines()) if git_status else 0,
+                "status": git_status.splitlines()[:30] if git_status else [],
+            },
+            "files": files,
+            "readme_excerpt": readme_excerpt,
+            "test_commands": test_commands,
+        }
+        summary = (
+            f"Project context for {data['name']}: "
+            f"{len(markers)} marker(s), {len(files)} file(s), "
+            f"{len(test_commands)} test command candidate(s)."
+        )
+        return ToolResult(
+            tool_name=self.name,
+            success=True,
+            summary=summary,
+            data=data,
+            duration_ms=_elapsed_ms(started_at),
+        )
+
+
 class ListProcessesArgs(BaseModel):
     limit: int = Field(default=25, ge=1, le=100)
 
@@ -451,6 +628,10 @@ def default_tools() -> list[Tool]:
         DetectProjectTool(),
         GetProjectSummaryTool(),
         SearchProjectTextTool(),
+        GetGitStatusTool(),
+        ListProjectFilesTool(),
+        ShowFileExcerptTool(),
+        GetProjectContextTool(),
         ListProcessesTool(),
         FindProcessOnPortTool(),
         GetSystemInfoTool(),
@@ -462,6 +643,122 @@ def default_tools() -> list[Tool]:
 
 def _elapsed_ms(started_at: float) -> int:
     return int((time.monotonic() - started_at) * 1000)
+
+
+def _run_git(cwd: Path, args: list[str], timeout_seconds: int) -> str | None:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=timeout_seconds,
+    )
+    if completed.returncode != 0:
+        return None
+    return completed.stdout.strip()
+
+
+def _project_markers(cwd: Path) -> list[str]:
+    markers = {
+        "package_json": cwd / "package.json",
+        "pyproject": cwd / "pyproject.toml",
+        "requirements": cwd / "requirements.txt",
+        "cargo": cwd / "Cargo.toml",
+        "docker_compose": cwd / "docker-compose.yml",
+        "git": cwd / ".git",
+    }
+    return [name for name, path in markers.items() if path.exists()]
+
+
+def _project_files(cwd: Path, *, max_files: int, max_depth: int) -> list[str]:
+    files: list[str] = []
+    ignored_dirs = {
+        ".git",
+        ".venv",
+        "venv",
+        "__pycache__",
+        "node_modules",
+        "dist",
+        "build",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".mypy_cache",
+        ".sage",
+    }
+    for path in sorted(cwd.rglob("*")):
+        if len(files) >= max_files:
+            break
+        try:
+            relative = path.relative_to(cwd)
+        except ValueError:
+            continue
+        if any(part in ignored_dirs for part in relative.parts):
+            continue
+        if len(relative.parts) > max_depth:
+            continue
+        if path.is_file():
+            files.append(str(relative))
+    return files
+
+
+def _package_metadata(cwd: Path) -> dict[str, Any]:
+    package_json = cwd / "package.json"
+    if not package_json.exists():
+        return {}
+    try:
+        parsed = json.loads(package_json.read_text())
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    scripts = parsed.get("scripts", {})
+    return {
+        "name": parsed.get("name") if isinstance(parsed.get("name"), str) else None,
+        "scripts": scripts if isinstance(scripts, dict) else {},
+    }
+
+
+def _pyproject_metadata(cwd: Path) -> dict[str, Any]:
+    pyproject = cwd / "pyproject.toml"
+    if not pyproject.exists():
+        return {}
+    name: str | None = None
+    for line in pyproject.read_text(errors="ignore").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("name") and "=" in stripped:
+            raw_name = stripped.split("=", 1)[1].strip().strip('"').strip("'")
+            if raw_name:
+                name = raw_name
+                break
+    return {"name": name}
+
+
+def _first_existing_excerpt(paths: list[Path], *, max_chars: int) -> str:
+    for path in paths:
+        if path.exists() and path.is_file() and not _is_binary_file(path):
+            return path.read_text(errors="replace")[:max_chars]
+    return ""
+
+
+def _test_command_candidates(markers: list[str], scripts: dict[str, Any]) -> list[str]:
+    commands: list[str] = []
+    if "pyproject" in markers or "requirements" in markers:
+        commands.append("pytest")
+    if "package_json" in markers:
+        if "test" in scripts:
+            commands.append("npm test")
+        if "test" not in scripts:
+            commands.append("npm run test")
+    return commands
+
+
+def _is_binary_file(path: Path) -> bool:
+    try:
+        chunk = path.read_bytes()[:1024]
+    except OSError:
+        return False
+    return b"\x00" in chunk
 
 
 def _capabilities_from_tools(tools: list[ToolSchema]) -> list[dict[str, str]]:

@@ -61,6 +61,97 @@ def direct_plan(transcript: str) -> IntentPlan | None:
             requires_confirmation=False,
         )
 
+    if normalized_text in {
+        "project overview",
+        "repo overview",
+        "repository overview",
+        "inspect this repo",
+        "inspect this repository",
+        "inspect this project",
+        "give me a project overview",
+        "give me a repo overview",
+        "summarize repo status",
+        "summarize repository status",
+    }:
+        return IntentPlan(
+            intent="project_overview",
+            confidence=1.0,
+            summary="Build a project overview from multiple read-only tools.",
+            actions=[
+                ToolCall(tool_name="detect_project", arguments={}),
+                ToolCall(tool_name="get_project_summary", arguments={}),
+                ToolCall(tool_name="get_git_status", arguments={}),
+                ToolCall(
+                    tool_name="list_project_files",
+                    arguments={"max_files": 40, "max_depth": 3},
+                ),
+            ],
+            risk=RiskLevel.READ_ONLY,
+            requires_confirmation=False,
+        )
+
+    if normalized_text in {
+        "project context",
+        "get project context",
+        "build project context",
+        "summarize project context",
+        "what is in this repo",
+        "what is in this repository",
+        "understand this project",
+    }:
+        return IntentPlan(
+            intent="get_project_context",
+            confidence=1.0,
+            summary="Build project context.",
+            actions=[ToolCall(tool_name="get_project_context", arguments={})],
+            risk=RiskLevel.READ_ONLY,
+            requires_confirmation=False,
+        )
+
+    if normalized_text in {"git status", "show git status", "what changed", "repo status"}:
+        return IntentPlan(
+            intent="get_git_status",
+            confidence=1.0,
+            summary="Report git status.",
+            actions=[ToolCall(tool_name="get_git_status", arguments={})],
+            risk=RiskLevel.READ_ONLY,
+            requires_confirmation=False,
+        )
+
+    if normalized_text in {
+        "list project files",
+        "show project files",
+        "list files",
+        "show files",
+        "what files are in this project",
+    }:
+        return IntentPlan(
+            intent="list_project_files",
+            confidence=1.0,
+            summary="List project files.",
+            actions=[ToolCall(tool_name="list_project_files", arguments={})],
+            risk=RiskLevel.READ_ONLY,
+            requires_confirmation=False,
+        )
+
+    excerpt_match = re.search(r"^(?:show|read|open)\s+(.+)$", text)
+    if excerpt_match:
+        requested_path = excerpt_match.group(1).strip().strip("'\"")
+        if _looks_like_project_file(requested_path):
+            return IntentPlan(
+                intent="show_file_excerpt",
+                confidence=1.0,
+                summary=f"Show file excerpt for {requested_path}.",
+                actions=[
+                    ToolCall(
+                        tool_name="show_file_excerpt",
+                        arguments={"path": requested_path},
+                    )
+                ],
+                risk=RiskLevel.READ_ONLY,
+                requires_confirmation=False,
+            )
+
     port_match = re.search(r"(?:port|on)\s+(\d{1,5})", text)
     if port_match and ("running" in text or "process" in text or "listening" in text):
         port = int(port_match.group(1))
@@ -104,6 +195,13 @@ def _is_system_info_request(text: str) -> bool:
         "what os am i on",
         "what operating system am i on",
         "what machine am i on",
+        "what are the specs of this laptop",
+        "what are my laptop specs",
+        "show laptop specs",
+        "laptop specs",
+        "device specs",
+        "computer specs",
+        "tell me about this laptop",
         "tell me about this system",
         "show system info",
         "system info",
@@ -145,6 +243,15 @@ def _is_memory_info_request(text: str) -> bool:
         "memory info",
         "ram info",
     }
+
+
+def _looks_like_project_file(value: str) -> bool:
+    normalized = _normalize_text(value)
+    if not value or value in {".", ".."}:
+        return False
+    if "/" in value or "." in value:
+        return True
+    return normalized in {"readme", "readme md", "pyproject toml", "package json"}
 
 
 def _normalize_text(text: str) -> str:

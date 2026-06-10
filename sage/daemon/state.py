@@ -35,6 +35,7 @@ from sage.contracts import (
 from sage.memory import SQLiteStore
 from sage.observability import run_diagnostics
 from sage.planner import OllamaPlanner, Planner, PlannerError, direct_plan
+from sage.response import NO_TOOL_MESSAGE, format_execution_summary, format_spoken_text
 from sage.safety import SafetyPolicy, confirmation_matches
 from sage.stt import STTProvider, TranscriptionError, build_stt_provider
 from sage.tools import ExecutionContext, ToolExecutionError, ToolRegistry
@@ -150,10 +151,9 @@ class DaemonState:
     def accept_text_command(self, request: TextCommandRequest) -> CommandRecord:
         now = datetime.now(UTC)
         command_id = f"cmd_{uuid4().hex}"
-        if request.command_text.strip().lower() == "cancel that":
-            latest_pending = self._latest_pending_command()
-            if latest_pending is not None:
-                return self.cancel_command(latest_pending.id)
+        pending_control = self._handle_pending_control_text(request.command_text)
+        if pending_control is not None:
+            return pending_control
         try:
             cwd = self._resolve_cwd(request.cwd)
         except ValueError as exc:
@@ -199,6 +199,7 @@ class DaemonState:
         now = datetime.now(UTC)
         command_id = f"cmd_{uuid4().hex}"
         raw_audio_path: Path | None = None
+        should_store_record = True
 
         try:
             recording = self._recorder.record_once(self._settings)
@@ -206,28 +207,33 @@ class DaemonState:
             stt_provider = self._stt_provider or build_stt_provider(self._settings)
             transcription = stt_provider.transcribe(recording.path, self._settings)
             try:
-                plan = self._plan_transcript(transcription.text, self._resolve_cwd(Path.cwd()))
-                record = self._record_from_plan(
-                    command_id=command_id,
-                    created_at=now,
-                    transcript=transcription.text,
-                    source="push_to_talk",
-                    plan=plan,
-                    cwd=self._resolve_cwd(Path.cwd()),
-                    raw_audio_path=recording.path if self._settings.keep_raw_audio else None,
-                    transcription=transcription,
-                )
+                pending_control = self._handle_pending_control_text(transcription.text)
+                if pending_control is not None:
+                    record = pending_control
+                    should_store_record = False
+                else:
+                    plan = self._plan_transcript(transcription.text, self._resolve_cwd(Path.cwd()))
+                    record = self._record_from_plan(
+                        command_id=command_id,
+                        created_at=now,
+                        transcript=transcription.text,
+                        source="push_to_talk",
+                        plan=plan,
+                        cwd=self._resolve_cwd(Path.cwd()),
+                        raw_audio_path=recording.path if self._settings.keep_raw_audio else None,
+                        transcription=transcription,
+                    )
             except PlannerError as exc:
                 record = CommandRecord(
                     id=command_id,
-                created_at=now,
-                transcript=transcription.text,
-                source="push_to_talk",
-                status=CommandStatus.FAILED,
-                cwd=Path.cwd(),
-                raw_audio_path=recording.path if self._settings.keep_raw_audio else None,
-                transcription=transcription,
-                error=str(exc),
+                    created_at=now,
+                    transcript=transcription.text,
+                    source="push_to_talk",
+                    status=CommandStatus.FAILED,
+                    cwd=Path.cwd(),
+                    raw_audio_path=recording.path if self._settings.keep_raw_audio else None,
+                    transcription=transcription,
+                    error=str(exc),
                 )
         except (AudioRecordingError, TranscriptionError, OSError) as exc:
             record = CommandRecord(
@@ -244,8 +250,9 @@ class DaemonState:
             if raw_audio_path is not None and not self._settings.keep_raw_audio:
                 raw_audio_path.unlink(missing_ok=True)
 
-        self._recent_commands.append(record)
-        self._store.save_command(record)
+        if should_store_record:
+            self._recent_commands.append(record)
+            self._store.save_command(record)
         return record
 
     def confirm_command(self, command_id: str, request: ConfirmationRequest) -> CommandRecord:
@@ -296,10 +303,7 @@ class DaemonState:
             confirmed_record = confirmed_record.model_copy(
                 update={
                     "status": CommandStatus.FAILED,
-                    "error": (
-                        "I understood the request, but no registered executable tool "
-                        "was selected."
-                    ),
+                    "error": NO_TOOL_MESSAGE,
                 }
             )
         confirmed_record = self._speak_for_record(confirmed_record)
@@ -388,10 +392,7 @@ class DaemonState:
             record = record.model_copy(
                 update={
                     "status": CommandStatus.FAILED,
-                    "error": (
-                        "I understood the request, but no registered executable tool "
-                        "was selected."
-                    ),
+                    "error": NO_TOOL_MESSAGE,
                 }
             )
         return self._speak_for_record(record)
@@ -437,23 +438,25 @@ class DaemonState:
             assistant_profile=self._profile,
             available_tools=self._tool_registry.list_schemas(),
         )
-        try:
-            for action in record.intent_plan.actions:
+        for action in record.intent_plan.actions:
+            try:
                 results.append(self._tool_registry.run(action, context))
-        except (ToolExecutionError, ValueError, OSError, subprocess.TimeoutExpired) as exc:
-            results.append(
-                ToolResult(
-                    tool_name=action.tool_name,
-                    success=False,
-                    summary="Tool execution failed.",
-                    details=str(exc),
-                    duration_ms=0,
+            except (ToolExecutionError, ValueError, OSError, subprocess.TimeoutExpired) as exc:
+                results.append(
+                    ToolResult(
+                        tool_name=action.tool_name,
+                        success=False,
+                        summary="Tool execution failed.",
+                        details=str(exc),
+                        duration_ms=0,
+                    )
                 )
-            )
+                if self._tool_registry.risk_for_tool(action.tool_name) != RiskLevel.READ_ONLY:
+                    break
 
         success = all(result.success for result in results)
         latency_ms = int((datetime.now(UTC) - started_at).total_seconds() * 1000)
-        summary = _execution_summary(results, success)
+        summary = format_execution_summary(results, success)
         execution_result = ExecutionResult(
             command_id=record.id,
             success=success,
@@ -471,26 +474,9 @@ class DaemonState:
         )
 
     def _speak_for_record(self, record: CommandRecord) -> CommandRecord:
-        text = self._spoken_text(record)
+        text = format_spoken_text(record)
         speech = self._tts_provider.speak(text, self._settings)
         return record.model_copy(update={"speech_result": speech})
-
-    @staticmethod
-    def _spoken_text(record: CommandRecord) -> str:
-        if record.status == CommandStatus.AWAITING_CONFIRMATION and record.safety_decision:
-            phrase = record.safety_decision.confirmation_phrase or "confirm action"
-            return f"{record.safety_decision.reason} Say {phrase} to continue."
-        if record.execution_result:
-            return record.execution_result.spoken_summary
-        if record.status == CommandStatus.BLOCKED:
-            return f"Blocked. {record.error or 'The command is not allowed.'}"
-        if record.status == CommandStatus.FAILED:
-            return f"Failed. {record.error or 'The command did not complete.'}"
-        if record.status == CommandStatus.CANCELLED:
-            return "Command cancelled."
-        if record.status == CommandStatus.CONFIRMED:
-            return "Command confirmed."
-        return record.intent_plan.summary if record.intent_plan else "Command recorded."
 
     def _evaluate_safety(self, plan: IntentPlan) -> SafetyDecision:
         return self._safety_policy.evaluate(
@@ -524,6 +510,23 @@ class DaemonState:
         for record in self.list_recent_commands(limit=20):
             if record.status == CommandStatus.AWAITING_CONFIRMATION:
                 return record
+        return None
+
+    def _handle_pending_control_text(self, transcript: str) -> CommandRecord | None:
+        latest_pending = self._latest_pending_command()
+        if latest_pending is None:
+            return None
+        normalized = transcript.strip().lower()
+        if normalized == "cancel that":
+            return self.cancel_command(latest_pending.id)
+        if (
+            latest_pending.safety_decision is not None
+            and confirmation_matches(latest_pending.safety_decision, normalized)
+        ):
+            return self.confirm_command(
+                latest_pending.id,
+                ConfirmationRequest(phrase=normalized),
+            )
         return None
 
     def _replace_command(self, replacement: CommandRecord) -> CommandRecord:
@@ -561,15 +564,6 @@ class DaemonState:
         if not resolved.is_dir():
             raise ValueError(f"cwd is not a directory: {resolved}")
         return resolved
-
-
-def _execution_summary(results: list[ToolResult], success: bool) -> str:
-    if not results:
-        return "Command completed." if success else "Command failed."
-    summaries = [result.summary for result in results if result.summary]
-    if summaries:
-        return " ".join(summaries)
-    return "Command completed." if success else "Command failed."
 
 
 RISK_ORDER = {

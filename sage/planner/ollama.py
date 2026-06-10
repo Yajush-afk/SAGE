@@ -107,6 +107,8 @@ def build_planner_messages(transcript: str, context: PlannerContext) -> list[dic
                 "one valid JSON object matching the IntentPlan schema. Do not include "
                 "Markdown. Do not invent tools. Only use tools listed in available_tools. "
                 "If no tool is available for the command, return actions as an empty list. "
+                "Use multiple ordered read-only actions when the user asks for a broader "
+                "project overview that benefits from combining available project tools. "
                 "Classify risk conservatively."
             ),
         },
@@ -152,12 +154,27 @@ def build_repair_messages(
     return messages
 
 
+def normalize_planner_payload(parsed: dict) -> dict:
+    actions = parsed.get("actions")
+    if isinstance(actions, list):
+        normalized_actions = []
+        for action in actions:
+            if isinstance(action, dict):
+                action = dict(action)
+                if "arguments" not in action and "tool_input" in action:
+                    action["arguments"] = action.pop("tool_input")
+            normalized_actions.append(action)
+        parsed = dict(parsed)
+        parsed["actions"] = normalized_actions
+    return parsed
+
+
 def parse_intent_plan(raw_content: str) -> IntentPlan:
     content = strip_json_fence(raw_content)
     parsed = json.loads(content)
     if not isinstance(parsed, dict):
         raise PlannerError("planner output must be a JSON object")
-    return IntentPlan.model_validate(parsed)
+    return IntentPlan.model_validate(normalize_planner_payload(parsed))
 
 
 def strip_json_fence(raw_content: str) -> str:

@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from sage.context import generate_assistant_profile
 from sage.contracts import PlannerContext, RiskLevel, RuntimeSettings
 from sage.planner import OllamaPlanner, PlannerError, build_planner_messages, parse_intent_plan
+from sage.planner.ollama import normalize_planner_payload
 
 
 def test_parse_intent_plan_accepts_valid_json():
@@ -44,6 +45,67 @@ def test_parse_intent_plan_accepts_json_fence():
     assert plan.intent == "inspect_project"
 
 
+def test_parse_intent_plan_normalizes_tool_input_to_arguments():
+    plan = parse_intent_plan(
+        json.dumps(
+            {
+                "intent": "get_laptop_specs",
+                "confidence": 0.9,
+                "summary": "Report laptop specs.",
+                "actions": [
+                    {
+                        "tool_name": "get_system_info",
+                        "tool_input": {},
+                    }
+                ],
+                "risk": "read_only",
+                "requires_confirmation": False,
+            }
+        )
+    )
+
+    assert plan.intent == "get_laptop_specs"
+    assert plan.actions[0].tool_name == "get_system_info"
+    assert plan.actions[0].arguments == {}
+
+
+def test_normalize_planner_payload_does_not_mutate_input():
+    payload = {
+        "intent": "get_laptop_specs",
+        "actions": [{"tool_name": "get_system_info", "tool_input": {"cwd": "."}}],
+    }
+
+    normalized = normalize_planner_payload(payload)
+
+    assert payload["actions"][0] == {"tool_name": "get_system_info", "tool_input": {"cwd": "."}}
+    assert normalized["actions"][0] == {
+        "tool_name": "get_system_info",
+        "arguments": {"cwd": "."},
+    }
+
+
+def test_parse_intent_plan_rejects_tool_input_when_arguments_already_present():
+    with pytest.raises(ValidationError):
+        parse_intent_plan(
+            json.dumps(
+                {
+                    "intent": "inspect_project",
+                    "confidence": 0.8,
+                    "summary": "Inspect the project.",
+                    "actions": [
+                        {
+                            "tool_name": "detect_project",
+                            "arguments": {},
+                            "tool_input": {},
+                        }
+                    ],
+                    "risk": "read_only",
+                    "requires_confirmation": False,
+                }
+            )
+        )
+
+
 def test_parse_intent_plan_rejects_invalid_shape():
     with pytest.raises(ValidationError):
         parse_intent_plan('{"intent": "missing required fields"}')
@@ -61,6 +123,7 @@ def test_build_planner_messages_includes_context(tmp_path):
     messages = build_planner_messages("start frontend", context)
 
     assert messages[0]["role"] == "system"
+    assert "multiple ordered read-only actions" in messages[0]["content"]
     assert "start frontend" in messages[1]["content"]
     assert str(tmp_path) in messages[1]["content"]
 
