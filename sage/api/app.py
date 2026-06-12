@@ -19,8 +19,14 @@ from sage.contracts import (
     ToolSchema,
     Workflow,
     WorkflowCreateRequest,
+    WorkflowRunRequest,
 )
-from sage.daemon.state import CommandNotFoundError, DaemonState, daemon_state
+from sage.daemon.state import (
+    CommandNotFoundError,
+    DaemonState,
+    WorkflowNotFoundError,
+    daemon_state,
+)
 
 
 def create_app(state: DaemonState | None = None) -> FastAPI:
@@ -85,6 +91,13 @@ def create_app(state: DaemonState | None = None) -> FastAPI:
     def workflows() -> list[Workflow]:
         return runtime_state.list_workflows()
 
+    @app.get("/workflows/{workflow_id}", response_model=Workflow)
+    def get_workflow(workflow_id: str) -> Workflow:
+        try:
+            return runtime_state.get_workflow(workflow_id)
+        except WorkflowNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Workflow not found.") from exc
+
     @app.post("/workflows", response_model=Workflow)
     def create_workflow(request: WorkflowCreateRequest) -> Workflow:
         return runtime_state.save_workflow(
@@ -94,6 +107,13 @@ def create_app(state: DaemonState | None = None) -> FastAPI:
             project_path=request.project_path,
             is_global=request.is_global,
         )
+
+    @app.post("/workflows/{workflow_id}/run", response_model=CommandRecord)
+    def run_workflow(workflow_id: str, request: WorkflowRunRequest) -> CommandRecord:
+        try:
+            return runtime_state.run_workflow(workflow_id, cwd=request.cwd)
+        except WorkflowNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Workflow not found.") from exc
 
     @app.delete("/workflows/{workflow_id}")
     def delete_workflow(workflow_id: str) -> dict[str, bool]:

@@ -144,9 +144,22 @@ class SQLiteStore:
             rows = connection.execute("SELECT payload FROM workflows ORDER BY name").fetchall()
         return [Workflow.model_validate_json(row["payload"]) for row in rows]
 
+    def get_workflow(self, identifier: str) -> Workflow | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT payload FROM workflows WHERE id = ? OR name = ?",
+                (identifier, identifier),
+            ).fetchone()
+        if row is None:
+            return None
+        return Workflow.model_validate_json(row["payload"])
+
     def delete_workflow(self, workflow_id: str) -> bool:
         with self._connect() as connection:
-            cursor = connection.execute("DELETE FROM workflows WHERE id = ?", (workflow_id,))
+            cursor = connection.execute(
+                "DELETE FROM workflows WHERE id = ? OR name = ?",
+                (workflow_id, workflow_id),
+            )
         return cursor.rowcount > 0
 
     def stats(self) -> dict[str, int | str]:
@@ -218,8 +231,17 @@ class InMemoryStore:
     def list_workflows(self) -> list[Workflow]:
         return sorted(self.workflows.values(), key=lambda workflow: workflow.name)
 
+    def get_workflow(self, identifier: str) -> Workflow | None:
+        for workflow in self.workflows.values():
+            if workflow.id == identifier or workflow.name == identifier:
+                return workflow
+        return None
+
     def delete_workflow(self, workflow_id: str) -> bool:
-        return self.workflows.pop(workflow_id, None) is not None
+        workflow = self.get_workflow(workflow_id)
+        if workflow is None:
+            return False
+        return self.workflows.pop(workflow.id, None) is not None
 
     def stats(self) -> dict[str, int | str]:
         return {

@@ -15,6 +15,7 @@ import {
   Send,
   ShieldCheck,
   Square,
+  Trash2,
   Volume2,
   Wrench,
   XCircle
@@ -28,9 +29,11 @@ import {
   Workflow,
   cancelCommand,
   confirmCommand,
+  deleteWorkflow,
   listenOnce,
   loadCommand,
   loadSnapshot,
+  runWorkflow,
   sendTextCommand
 } from "./api";
 import "./styles.css";
@@ -172,6 +175,39 @@ function App() {
     } catch (error) {
       setActivity("failed");
       setErrors([error instanceof Error ? error.message : "Cancellation failed"]);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runSavedWorkflow(workflow: Workflow) {
+    if (busy) return;
+    setBusy(true);
+    setActivity("executing");
+    setErrors([]);
+    try {
+      const record = await runWorkflow(workflow.id);
+      setSelectedCommand(record);
+      setActivity(activityFromCommand(record));
+      await refresh(record.id);
+    } catch (error) {
+      setActivity("failed");
+      setErrors([error instanceof Error ? error.message : "Workflow run failed"]);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteSavedWorkflow(workflow: Workflow) {
+    if (busy) return;
+    setBusy(true);
+    setErrors([]);
+    try {
+      await deleteWorkflow(workflow.id);
+      await refresh();
+    } catch (error) {
+      setActivity("failed");
+      setErrors([error instanceof Error ? error.message : "Workflow delete failed"]);
     } finally {
       setBusy(false);
     }
@@ -343,8 +379,39 @@ function App() {
             ) : (
               workflows.map((workflow) => (
                 <div className="workflow" key={workflow.id}>
-                  <strong>{workflow.name}</strong>
-                  <small>{workflow.description || `${workflow.steps.length} steps`}</small>
+                  <div>
+                    <strong>{workflow.name}</strong>
+                    <small>{workflow.description || `${workflow.steps.length} step(s)`}</small>
+                    <small>{workflow.project_path ?? "current daemon workspace"}</small>
+                  </div>
+                  <div className="workflowActions">
+                    <button
+                      className="smallButton"
+                      disabled={busy || workflow.steps.length === 0}
+                      onClick={() => runSavedWorkflow(workflow)}
+                      type="button"
+                    >
+                      <Play size={14} />
+                      Run
+                    </button>
+                    <button
+                      className="smallButton dangerButton"
+                      disabled={busy}
+                      onClick={() => deleteSavedWorkflow(workflow)}
+                      type="button"
+                    >
+                      <Trash2 size={14} />
+                      Delete
+                    </button>
+                  </div>
+                  <div className="workflowSteps">
+                    {workflow.steps.slice(0, 4).map((step, index) => (
+                      <span key={`${workflow.id}-${step.tool_name}-${index}`}>
+                        {index + 1}. {step.tool_name}
+                      </span>
+                    ))}
+                    {workflow.steps.length > 4 && <span>+{workflow.steps.length - 4} more</span>}
+                  </div>
                 </div>
               ))
             )}

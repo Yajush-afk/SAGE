@@ -124,6 +124,7 @@ def test_schema_export_includes_planner_contracts():
     assert "ToolCall" in schemas
     assert "TranscriptionResult" in schemas
     assert "SafetyDecision" in schemas
+    assert "WorkflowRunRequest" in schemas
     assert schemas["IntentPlan"]["additionalProperties"] is False
 
 

@@ -338,6 +338,10 @@ class WorkflowCreateRequest(SageModel):
     steps: list[WorkflowStep] = Field(default_factory=list)
 
 
+class WorkflowRunRequest(SageModel):
+    cwd: Path | None = None
+
+
 class DiagnosticStatus(SageModel):
     name: str = Field(min_length=1)
     ok: bool
@@ -375,5 +379,6 @@ def export_contract_schemas() -> dict[str, dict[str, Any]]:
         "WorkflowStep": WorkflowStep.model_json_schema(),
         "Workflow": Workflow.model_json_schema(),
         "WorkflowCreateRequest": WorkflowCreateRequest.model_json_schema(),
+        "WorkflowRunRequest": WorkflowRunRequest.model_json_schema(),
         "DiagnosticStatus": DiagnosticStatus.model_json_schema(),
     }

@@ -752,6 +752,88 @@ def test_workflow_endpoints_save_and_list_workflows():
     assert listed.json()[0]["name"] == "inspect"
 
 
+def test_workflow_can_be_shown_and_run_by_name(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n")
+    client = make_client()
+    created = client.post(
+        "/workflows",
+        json={
+            "name": "inspect",
+            "description": "Inspect current project",
+            "steps": [WorkflowStep(tool_name="detect_project", arguments={}).model_dump()],
+        },
+    )
+
+    shown = client.get("/workflows/inspect")
+    run = client.post("/workflows/inspect/run", json={"cwd": str(tmp_path)})
+    recent = client.get("/commands/recent?limit=1")
+
+    assert created.status_code == 200
+    assert shown.status_code == 200
+    assert shown.json()["id"] == created.json()["id"]
+    assert run.status_code == 200
+    body = run.json()
+    assert body["status"] == "completed"
+    assert body["transcript"] == "workflow: inspect"
+    assert body["intent_plan"]["actions"][0]["tool_name"] == "detect_project"
+    assert recent.json()[0]["id"] == body["id"]
+
+
+def test_empty_workflow_run_fails_cleanly(tmp_path):
+    client = make_client()
+    created = client.post(
+        "/workflows",
+        json={"name": "empty", "steps": []},
+    )
+
+    run = client.post(f"/workflows/{created.json()['id']}/run", json={"cwd": str(tmp_path)})
+
+    assert run.status_code == 200
+    assert run.json()["status"] == "failed"
+    assert run.json()["error"] == "Workflow has no steps."
+
+
+def test_workflow_run_blocks_unknown_tool(tmp_path):
+    client = make_client()
+    created = client.post(
+        "/workflows",
+        json={"name": "unsafe", "steps": [{"tool_name": "missing_tool", "arguments": {}}]},
+    )
+
+    run = client.post(f"/workflows/{created.json()['id']}/run", json={"cwd": str(tmp_path)})
+
+    assert run.status_code == 200
+    assert run.json()["status"] == "blocked"
+    assert "unknown tool" in run.json()["error"]
+
+
+def test_missing_workflow_run_returns_404():
+    client = make_client()
+
+    response = client.post("/workflows/missing/run", json={})
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Workflow not found."
+
+
+def test_workflow_can_be_deleted_by_name():
+    client = make_client()
+    client.post(
+        "/workflows",
+        json={
+            "name": "inspect",
+            "steps": [WorkflowStep(tool_name="detect_project", arguments={}).model_dump()],
+        },
+    )
+
+    deleted = client.delete("/workflows/inspect")
+    listed = client.get("/workflows")
+
+    assert deleted.status_code == 200
+    assert deleted.json()["deleted"] is True
+    assert listed.json() == []
+
+
 def test_diagnostics_endpoint_returns_statuses():
     client = make_client()
 

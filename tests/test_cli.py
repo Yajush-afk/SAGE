@@ -203,6 +203,79 @@ def test_cli_cancel_posts_cancel_request(monkeypatch, capsys):
     assert '"status": "cancelled"' in captured.out
 
 
+def test_cli_workflows_show_gets_workflow(monkeypatch, capsys):
+    calls = []
+
+    def fake_request_json(method, url, payload=None, *, timeout_seconds=5):
+        calls.append((method, url, payload, timeout_seconds))
+        return 200, {"id": "wf_123", "name": "inspect"}
+
+    monkeypatch.setattr("sage.cli.request_json", fake_request_json)
+
+    exit_code = main(["workflows", "show", "inspect", "--url", "http://daemon.local"])
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert calls == [("GET", "http://daemon.local/workflows/inspect", None, 5)]
+    assert '"name": "inspect"' in captured.out
+
+
+def test_cli_workflows_run_posts_workflow_run(monkeypatch, tmp_path, capsys):
+    calls = []
+
+    def fake_request_json(method, url, payload=None, *, timeout_seconds=5):
+        calls.append((method, url, payload, timeout_seconds))
+        return 200, {"status": "completed", "transcript": "workflow: inspect"}
+
+    monkeypatch.setattr("sage.cli.request_json", fake_request_json)
+
+    exit_code = main(
+        [
+            "workflows",
+            "run",
+            "inspect",
+            "--cwd",
+            str(tmp_path),
+            "--timeout",
+            "45",
+            "--url",
+            "http://daemon.local",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert calls == [
+        (
+            "POST",
+            "http://daemon.local/workflows/inspect/run",
+            {"cwd": str(tmp_path.resolve())},
+            45,
+        )
+    ]
+    assert '"workflow: inspect"' in captured.out
+
+
+def test_cli_workflows_delete_deletes_workflow(monkeypatch, capsys):
+    calls = []
+
+    def fake_request_json(method, url, payload=None, *, timeout_seconds=5):
+        calls.append((method, url, payload, timeout_seconds))
+        return 200, {"deleted": True}
+
+    monkeypatch.setattr("sage.cli.request_json", fake_request_json)
+
+    exit_code = main(["workflows", "delete", "inspect", "--url", "http://daemon.local"])
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert calls == [("DELETE", "http://daemon.local/workflows/inspect", None, 5)]
+    assert '"deleted": true' in captured.out
+
+
 def test_cli_start_runs_local_stack(monkeypatch):
     calls = []
 

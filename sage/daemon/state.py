@@ -46,6 +46,10 @@ class CommandNotFoundError(KeyError):
     """Raised when a command id is not in the in-memory command history."""
 
 
+class WorkflowNotFoundError(KeyError):
+    """Raised when a workflow id or name is not saved."""
+
+
 class DaemonState:
     """State holder for the local daemon.
 
@@ -123,6 +127,12 @@ class DaemonState:
     def list_workflows(self) -> list[Workflow]:
         return self._store.list_workflows()
 
+    def get_workflow(self, workflow_id: str) -> Workflow:
+        workflow = self._store.get_workflow(workflow_id)
+        if workflow is None:
+            raise WorkflowNotFoundError(workflow_id)
+        return workflow
+
     def save_workflow(
         self,
         name: str,
@@ -141,6 +151,50 @@ class DaemonState:
 
     def delete_workflow(self, workflow_id: str) -> bool:
         return self._store.delete_workflow(workflow_id)
+
+    def run_workflow(self, workflow_id: str, cwd: Path | None = None) -> CommandRecord:
+        workflow = self.get_workflow(workflow_id)
+        now = datetime.now(UTC)
+        command_id = f"cmd_{uuid4().hex}"
+        resolved_cwd = self._resolve_cwd(cwd or workflow.project_path or Path.cwd())
+
+        if not workflow.steps:
+            record = CommandRecord(
+                id=command_id,
+                created_at=now,
+                transcript=f"workflow: {workflow.name}",
+                source="api",
+                status=CommandStatus.FAILED,
+                cwd=resolved_cwd,
+                error="Workflow has no steps.",
+            )
+            record = self._speak_for_record(record)
+            self._recent_commands.append(record)
+            self._store.save_command(record)
+            return record
+
+        plan = IntentPlan(
+            intent=f"workflow_{workflow.name.strip().lower().replace(' ', '_')}",
+            confidence=1.0,
+            summary=f"Run workflow {workflow.name}.",
+            actions=[
+                ToolCall(tool_name=step.tool_name, arguments=step.arguments)
+                for step in workflow.steps
+            ],
+            risk=RiskLevel.READ_ONLY,
+            requires_confirmation=False,
+        )
+        record = self._record_from_plan(
+            command_id=command_id,
+            created_at=now,
+            transcript=f"workflow: {workflow.name}",
+            source="api",
+            plan=plan,
+            cwd=resolved_cwd,
+        )
+        self._recent_commands.append(record)
+        self._store.save_command(record)
+        return record
 
     def diagnostics(self) -> list[DiagnosticStatus]:
         return run_diagnostics(self._settings)

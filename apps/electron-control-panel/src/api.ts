@@ -71,7 +71,21 @@ export type Diagnostic = {
   docs_anchor?: string;
 };
 export type Tool = { name: string; description: string; risk: string };
-export type Workflow = { id: string; name: string; description: string; steps: unknown[] };
+export type WorkflowStep = {
+  tool_name: string;
+  arguments: Record<string, unknown>;
+};
+
+export type Workflow = {
+  id: string;
+  name: string;
+  description: string;
+  project_path?: string | null;
+  is_global?: boolean;
+  steps: WorkflowStep[];
+  created_at?: string;
+  updated_at?: string;
+};
 export type StorageStats = {
   path: string;
   size_bytes: number;
@@ -131,6 +145,21 @@ export async function confirmCommand(commandId: string, phrase: string): Promise
 
 export async function cancelCommand(commandId: string): Promise<Command> {
   return postJson<Command>(`/commands/${commandId}/cancel`);
+}
+
+export async function runWorkflow(workflowId: string): Promise<Command> {
+  return postJson<Command>(`/workflows/${workflowId}/run`, {});
+}
+
+export async function deleteWorkflow(workflowId: string): Promise<{ deleted: boolean }> {
+  const response = await fetch(`${API}/workflows/${workflowId}`, {
+    method: "DELETE",
+    headers: { Accept: "application/json" }
+  });
+  if (!response.ok) {
+    throw new Error(`/workflows/${workflowId}: ${response.status} ${response.statusText}`);
+  }
+  return response.json() as Promise<{ deleted: boolean }>;
 }
 
 async function safeFetch<T>(path: string, fallback: T): Promise<[T, string | null]> {

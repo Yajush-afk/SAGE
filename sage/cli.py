@@ -101,6 +101,22 @@ def build_parser() -> argparse.ArgumentParser:
     workflows_subcommands = workflows.add_subparsers(dest="workflows_command")
     workflows_list = workflows_subcommands.add_parser("list", help="List saved workflows.")
     workflows_list.add_argument("--url", default=DEFAULT_DAEMON_URL, help="Daemon base URL.")
+    workflows_show = workflows_subcommands.add_parser("show", help="Show one saved workflow.")
+    workflows_show.add_argument("workflow_id", help="Workflow id or unique name.")
+    workflows_show.add_argument("--url", default=DEFAULT_DAEMON_URL, help="Daemon base URL.")
+    workflows_run = workflows_subcommands.add_parser("run", help="Run a saved workflow.")
+    workflows_run.add_argument("workflow_id", help="Workflow id or unique name.")
+    workflows_run.add_argument("--url", default=DEFAULT_DAEMON_URL, help="Daemon base URL.")
+    workflows_run.add_argument("--cwd", type=Path, help="Workspace directory for this run.")
+    workflows_run.add_argument(
+        "--timeout",
+        default=300,
+        type=int,
+        help="Seconds to wait for workflow execution.",
+    )
+    workflows_delete = workflows_subcommands.add_parser("delete", help="Delete a saved workflow.")
+    workflows_delete.add_argument("workflow_id", help="Workflow id or unique name.")
+    workflows_delete.add_argument("--url", default=DEFAULT_DAEMON_URL, help="Daemon base URL.")
 
     diagnostics = subcommands.add_parser("diagnostics", help="Show daemon diagnostics.")
     diagnostics.add_argument("--url", default=DEFAULT_DAEMON_URL, help="Daemon base URL.")
@@ -253,6 +269,33 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "workflows" and args.workflows_command == "list":
             status, body = request_json("GET", daemon_url(args.url, "/workflows"))
+            print_json(body)
+            return 0 if status < 400 else 1
+
+        if args.command == "workflows" and args.workflows_command == "show":
+            status, body = request_json(
+                "GET",
+                daemon_url(args.url, f"/workflows/{args.workflow_id}"),
+            )
+            print_json(body)
+            return 0 if status < 400 else 1
+
+        if args.command == "workflows" and args.workflows_command == "run":
+            payload = {"cwd": str(args.cwd.resolve())} if args.cwd else {}
+            status, body = request_json(
+                "POST",
+                daemon_url(args.url, f"/workflows/{args.workflow_id}/run"),
+                payload,
+                timeout_seconds=args.timeout,
+            )
+            print_json(body)
+            return 0 if status < 400 else 1
+
+        if args.command == "workflows" and args.workflows_command == "delete":
+            status, body = request_json(
+                "DELETE",
+                daemon_url(args.url, f"/workflows/{args.workflow_id}"),
+            )
             print_json(body)
             return 0 if status < 400 else 1
 

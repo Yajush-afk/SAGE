@@ -50,7 +50,8 @@ button:disabled {
 
 .secondaryButton,
 .demoButton,
-.iconButton {
+.iconButton,
+.smallButton {
   background: var(--panel-2);
   border: 1px solid var(--line);
   color: var(--text);
@@ -59,6 +60,11 @@ button:disabled {
 .dangerButton {
   background: var(--red);
   color: var(--black);
+}
+
+.smallButton {
+  min-height: 32px;
+  padding: 7px 10px;
 }
 
 .shell {
@@ -441,6 +447,31 @@ dd {
   color: var(--amber);
   display: block;
   margin-top: 8px;
+}
+
+.workflow {
+  display: grid;
+  gap: 10px;
+}
+
+.workflowActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.workflowSteps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.workflowSteps span {
+  background: var(--panel-3);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  padding: 5px 7px;
 }
 
 strong,

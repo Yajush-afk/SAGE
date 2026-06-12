@@ -156,15 +156,20 @@ Deliverables:
 
 ## Phase 8: Runnable Workflows
 
+Status: implemented.
+
 Goal:
 
 - turn saved workflows into executable typed routines.
 
-Planned:
+Deliverables:
 
 - workflow run API,
 - workflow run CLI,
-- workflow inspect/run/delete UI.
+- workflow lookup by id or name,
+- workflow runs recorded as auditable command records,
+- safety/tool validation reused for saved workflow steps,
+- workflow run/delete controls in the control panel.
 
 ## Phase 9: Internal Provider Abstraction
 
