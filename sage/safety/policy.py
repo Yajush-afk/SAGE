@@ -40,6 +40,7 @@ class SafetyPolicy:
         self,
         plan: IntentPlan,
         confirmation_timeout_seconds: int,
+        confirmation_max_attempts: int = 3,
         now: datetime | None = None,
     ) -> SafetyDecision:
         evaluated_at = now or datetime.now(UTC)
@@ -50,6 +51,9 @@ class SafetyPolicy:
                 action=SafetyAction.BLOCK,
                 risk=risk,
                 reason=f"{risk.value} commands are blocked in the current safety policy.",
+                category="blocked_risk",
+                max_attempts=confirmation_max_attempts,
+                blocked_by="risk_policy",
             )
 
         if risk == RiskLevel.STATE_CHANGING or plan.requires_confirmation:
@@ -60,12 +64,16 @@ class SafetyPolicy:
                 reason="This command changes local state and requires explicit confirmation.",
                 confirmation_phrase=phrase,
                 expires_at=evaluated_at + timedelta(seconds=confirmation_timeout_seconds),
+                category="requires_confirmation",
+                max_attempts=confirmation_max_attempts,
             )
 
         return SafetyDecision(
             action=SafetyAction.ALLOW,
             risk=risk,
             reason="This command is read-only or safe to plan without confirmation.",
+            category="allowed",
+            max_attempts=confirmation_max_attempts,
         )
 
     def _effective_risk(self, plan: IntentPlan) -> RiskLevel:

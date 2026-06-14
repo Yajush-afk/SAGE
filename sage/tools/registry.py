@@ -13,7 +13,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
-from sage.contracts import AssistantProfile, RiskLevel, ToolCall, ToolResult, ToolSchema
+from sage.contracts import AssistantProfile, RiskLevel, ToolCall, ToolPolicy, ToolResult, ToolSchema
 
 
 class ToolExecutionError(RuntimeError):
@@ -42,6 +42,7 @@ class Tool(Protocol):
     description: str
     risk: RiskLevel
     args_model: type[BaseModel]
+    policy: ToolPolicy
 
     def run(self, args: BaseModel, context: ExecutionContext) -> ToolResult: ...
 
@@ -53,13 +54,19 @@ class BaseTool:
     description: str
     risk: RiskLevel
     args_model: type[BaseModel]
+    policy: ToolPolicy | None = None
 
     def schema(self) -> ToolSchema:
+        policy = self.policy or ToolPolicy(
+            risk=self.risk,
+            requires_confirmation=self.risk == RiskLevel.STATE_CHANGING,
+        )
         return ToolSchema(
             name=self.name,
             description=self.description,
             risk=self.risk,
             parameters_schema=self.args_model.model_json_schema(),
+            policy=policy,
         )
 
 
@@ -72,6 +79,7 @@ class DetectProjectTool(BaseTool):
     description = "Detect project type markers in the current workspace."
     risk = RiskLevel.READ_ONLY
     args_model = DetectProjectArgs
+    policy = ToolPolicy(risk=risk, allowed_path_args=["cwd"])
 
     def run(self, args: DetectProjectArgs, context: ExecutionContext) -> ToolResult:
         started_at = time.monotonic()
@@ -104,6 +112,7 @@ class GetProjectSummaryTool(BaseTool):
     description = "Summarize basic project metadata and scripts."
     risk = RiskLevel.READ_ONLY
     args_model = GetProjectSummaryArgs
+    policy = ToolPolicy(risk=risk, allowed_path_args=["cwd"])
 
     def run(self, args: GetProjectSummaryArgs, context: ExecutionContext) -> ToolResult:
         started_at = time.monotonic()
@@ -153,6 +162,7 @@ class SearchProjectTextTool(BaseTool):
     description = "Search project files for literal text using ripgrep."
     risk = RiskLevel.READ_ONLY
     args_model = SearchProjectTextArgs
+    policy = ToolPolicy(risk=risk, allowed_path_args=["cwd"])
 
     def run(self, args: SearchProjectTextArgs, context: ExecutionContext) -> ToolResult:
         started_at = time.monotonic()
@@ -195,6 +205,7 @@ class GetGitStatusTool(BaseTool):
     description = "Report current git branch and short working tree status."
     risk = RiskLevel.READ_ONLY
     args_model = GetGitStatusArgs
+    policy = ToolPolicy(risk=risk, allowed_path_args=["cwd"])
 
     def run(self, args: GetGitStatusArgs, context: ExecutionContext) -> ToolResult:
         started_at = time.monotonic()
@@ -244,6 +255,7 @@ class ListProjectFilesTool(BaseTool):
     description = "List project files under the current workspace with depth and count limits."
     risk = RiskLevel.READ_ONLY
     args_model = ListProjectFilesArgs
+    policy = ToolPolicy(risk=risk, allowed_path_args=["cwd"])
 
     def run(self, args: ListProjectFilesArgs, context: ExecutionContext) -> ToolResult:
         started_at = time.monotonic()
@@ -270,6 +282,7 @@ class ShowFileExcerptTool(BaseTool):
     description = "Show a bounded text excerpt from a file inside the current workspace."
     risk = RiskLevel.READ_ONLY
     args_model = ShowFileExcerptArgs
+    policy = ToolPolicy(risk=risk, allowed_path_args=["cwd", "path"])
 
     def run(self, args: ShowFileExcerptArgs, context: ExecutionContext) -> ToolResult:
         started_at = time.monotonic()
@@ -317,6 +330,7 @@ class GetProjectContextTool(BaseTool):
     description = "Build a bounded read-only context bundle for the current project."
     risk = RiskLevel.READ_ONLY
     args_model = GetProjectContextArgs
+    policy = ToolPolicy(risk=risk, allowed_path_args=["cwd"])
 
     def run(self, args: GetProjectContextArgs, context: ExecutionContext) -> ToolResult:
         started_at = time.monotonic()
@@ -372,6 +386,7 @@ class ListProcessesTool(BaseTool):
     description = "List local user-visible processes from /proc."
     risk = RiskLevel.READ_ONLY
     args_model = ListProcessesArgs
+    policy = ToolPolicy(risk=risk, redacted_data_keys=["cmdline"])
 
     def run(self, args: ListProcessesArgs, context: ExecutionContext) -> ToolResult:
         started_at = time.monotonic()
@@ -411,6 +426,7 @@ class FindProcessOnPortTool(BaseTool):
     description = "Find listening processes using a TCP or UDP port."
     risk = RiskLevel.READ_ONLY
     args_model = FindProcessOnPortArgs
+    policy = ToolPolicy(risk=risk)
 
     def run(self, args: FindProcessOnPortArgs, context: ExecutionContext) -> ToolResult:
         started_at = time.monotonic()
@@ -450,6 +466,7 @@ class GetSystemInfoTool(BaseTool):
     description = "Report basic local operating system, kernel, machine, Python, and shell details."
     risk = RiskLevel.READ_ONLY
     args_model = GetSystemInfoArgs
+    policy = ToolPolicy(risk=risk)
 
     def run(self, args: GetSystemInfoArgs, context: ExecutionContext) -> ToolResult:
         started_at = time.monotonic()
@@ -488,6 +505,7 @@ class GetMemoryInfoTool(BaseTool):
     description = "Report local RAM totals and current memory availability."
     risk = RiskLevel.READ_ONLY
     args_model = GetMemoryInfoArgs
+    policy = ToolPolicy(risk=risk)
 
     def run(self, args: GetMemoryInfoArgs, context: ExecutionContext) -> ToolResult:
         started_at = time.monotonic()
@@ -525,6 +543,7 @@ class GetAssistantProfileTool(BaseTool):
     description = "Report SAGE's local identity and the generated laptop profile it is using."
     risk = RiskLevel.READ_ONLY
     args_model = GetAssistantProfileArgs
+    policy = ToolPolicy(risk=risk)
 
     def run(self, args: GetAssistantProfileArgs, context: ExecutionContext) -> ToolResult:
         started_at = time.monotonic()
@@ -565,6 +584,7 @@ class RunTestsTool(BaseTool):
     description = "Run a constrained test command in the current workspace."
     risk = RiskLevel.SAFE_EXECUTION
     args_model = RunTestsArgs
+    policy = ToolPolicy(risk=risk, allowed_path_args=["cwd"])
 
     def run(self, args: RunTestsArgs, context: ExecutionContext) -> ToolResult:
         started_at = time.monotonic()
@@ -616,6 +636,13 @@ class ToolRegistry:
 
     def risk_for_tool(self, name: str) -> RiskLevel:
         return self.get(name).risk
+
+    def policy_for_tool(self, name: str) -> ToolPolicy:
+        tool = self.get(name)
+        return tool.policy or ToolPolicy(
+            risk=tool.risk,
+            requires_confirmation=tool.risk == RiskLevel.STATE_CHANGING,
+        )
 
     def run(self, call: ToolCall, context: ExecutionContext) -> ToolResult:
         tool = self.get(call.tool_name)

@@ -368,6 +368,12 @@ function App() {
                   <strong>{tool.name}</strong>
                   <small>{tool.description}</small>
                   <span>{tool.risk}</span>
+                  {tool.policy && (
+                    <small>
+                      {tool.policy.requires_confirmation ? "confirmation required" : "direct"} ·{" "}
+                      {tool.policy.redacted_data_keys?.length ?? 0} redaction key(s)
+                    </small>
+                  )}
                 </div>
               ))}
             </div>
@@ -470,6 +476,13 @@ function CommandDetail({
               <div>
                 <strong>{phrase ?? "confirm action"}</strong>
                 <small>{command.safety_decision?.reason}</small>
+                <small>
+                  Attempts {command.safety_decision?.attempts ?? 0}/
+                  {command.safety_decision?.max_attempts ?? 3}
+                </small>
+                {command.safety_decision?.expires_at && (
+                  <small>Expires {formatDate(command.safety_decision.expires_at)}</small>
+                )}
               </div>
               <div className="confirmActions">
                 <button type="button" onClick={onConfirm} disabled={busy || !phrase}>
@@ -502,6 +515,25 @@ function CommandDetail({
                   ["confidence", formatNumber(command.intent_plan.confidence)],
                   ["summary", command.intent_plan.summary],
                   ["actions", String(command.intent_plan.actions?.length ?? 0)]
+                ]}
+              />
+            </section>
+          )}
+
+          {command.safety_decision && (
+            <section className="detailSection safetyBox">
+              <h3>Safety</h3>
+              <DetailGrid
+                items={[
+                  ["action", command.safety_decision.action ?? "n/a"],
+                  ["risk", command.safety_decision.risk ?? "n/a"],
+                  ["category", command.safety_decision.category ?? "n/a"],
+                  [
+                    "attempts",
+                    `${command.safety_decision.attempts ?? 0}/${command.safety_decision.max_attempts ?? 3}`
+                  ],
+                  ["blocked by", command.safety_decision.blocked_by ?? "none"],
+                  ["reason", command.safety_decision.reason]
                 ]}
               />
             </section>

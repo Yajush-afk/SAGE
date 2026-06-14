@@ -22,7 +22,8 @@ def make_context(tmp_path: Path) -> ExecutionContext:
 def test_registry_lists_builtin_tool_schemas():
     registry = ToolRegistry()
 
-    tool_names = {schema.name for schema in registry.list_schemas()}
+    schemas = registry.list_schemas()
+    tool_names = {schema.name for schema in schemas}
 
     assert "detect_project" in tool_names
     assert "get_project_summary" in tool_names
@@ -35,6 +36,9 @@ def test_registry_lists_builtin_tool_schemas():
     assert "show_file_excerpt" in tool_names
     assert "get_project_context" in tool_names
     assert "run_tests" in tool_names
+    assert all(schema.policy is not None for schema in schemas)
+    excerpt_schema = next(schema for schema in schemas if schema.name == "show_file_excerpt")
+    assert excerpt_schema.policy.allowed_path_args == ["cwd", "path"]
 
 
 def test_detect_project_tool_reports_markers(tmp_path):

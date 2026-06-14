@@ -216,11 +216,13 @@ Deferred:
 
 ## Phase 11: Safety Hardening
 
+Status: Implemented.
+
 Goal:
 
 - strengthen the safety story as a portfolio centerpiece.
 
-Planned:
+Implemented:
 
 - `ToolPolicy` metadata,
 - output redaction,

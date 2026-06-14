@@ -385,6 +385,10 @@ h3 {
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
+.safetyBox {
+  background: color-mix(in srgb, var(--amber), transparent 92%);
+}
+
 .confirmActions {
   display: flex;
   gap: 8px;

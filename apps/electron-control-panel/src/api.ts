@@ -35,6 +35,10 @@ export type Command = {
     reason: string;
     confirmation_phrase?: string | null;
     expires_at?: string | null;
+    category?: string;
+    attempts?: number;
+    max_attempts?: number;
+    blocked_by?: string | null;
   } | null;
   execution_result?: {
     command_id?: string;
@@ -70,7 +74,18 @@ export type Diagnostic = {
   fix_hint?: string;
   docs_anchor?: string;
 };
-export type Tool = { name: string; description: string; risk: string };
+export type Tool = {
+  name: string;
+  description: string;
+  risk: string;
+  policy?: {
+    risk: string;
+    requires_confirmation?: boolean;
+    user_visible?: boolean;
+    allowed_path_args?: string[];
+    redacted_data_keys?: string[];
+  } | null;
+};
 export type WorkflowStep = {
   tool_name: string;
   arguments: Record<string, unknown>;

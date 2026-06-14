@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from sage.audio import AudioRecorder, AudioRecordingError, FfmpegAudioRecorder
@@ -346,26 +348,64 @@ class DaemonState:
             record.safety_decision.expires_at is not None
             and now > record.safety_decision.expires_at
         ):
+            expired_decision = record.safety_decision.model_copy(
+                update={
+                    "action": SafetyAction.BLOCK,
+                    "category": "confirmation_expired",
+                    "blocked_by": "confirmation_timeout",
+                }
+            )
             updated = self._replace_command(
                 record.model_copy(
                     update={
                         "status": CommandStatus.FAILED,
+                        "safety_decision": expired_decision,
                         "error": "Confirmation window expired.",
+                    }
+                )
+            )
+            updated = self._speak_for_record(updated)
+            self._store.save_command(updated)
+            return updated
+
+        if not confirmation_matches(record.safety_decision, request.phrase):
+            attempts = record.safety_decision.attempts + 1
+            decision = record.safety_decision.model_copy(update={"attempts": attempts})
+            if attempts >= record.safety_decision.max_attempts:
+                decision = decision.model_copy(
+                    update={
+                        "action": SafetyAction.BLOCK,
+                        "category": "confirmation_attempts_exhausted",
+                        "blocked_by": "confirmation_attempt_limit",
+                    }
+                )
+                updated = self._replace_command(
+                    record.model_copy(
+                        update={
+                            "status": CommandStatus.FAILED,
+                            "safety_decision": decision,
+                            "error": "Confirmation attempts exhausted.",
+                        }
+                    )
+                )
+                updated = self._speak_for_record(updated)
+                self._store.save_command(updated)
+                return updated
+
+            updated = self._replace_command(
+                record.model_copy(
+                    update={
+                        "safety_decision": decision,
+                        "error": (
+                            f"Confirmation phrase did not match. Say "
+                            f"'{record.safety_decision.confirmation_phrase}' to continue. "
+                            f"Attempt {attempts}/{record.safety_decision.max_attempts}."
+                        ),
                     }
                 )
             )
             self._store.save_command(updated)
             return updated
-
-        if not confirmation_matches(record.safety_decision, request.phrase):
-            return record.model_copy(
-                update={
-                    "error": (
-                        f"Confirmation phrase did not match. Say "
-                        f"'{record.safety_decision.confirmation_phrase}' to continue."
-                    )
-                }
-            )
 
         confirmed_decision = record.safety_decision.model_copy(update={"expires_at": None})
         confirmed_record = record.model_copy(
@@ -521,15 +561,17 @@ class DaemonState:
         )
         for action in record.intent_plan.actions:
             try:
-                results.append(self._tool_registry.run(action, context))
+                results.append(self._redact_tool_result(self._tool_registry.run(action, context)))
             except (ToolExecutionError, ValueError, OSError, subprocess.TimeoutExpired) as exc:
                 results.append(
-                    ToolResult(
-                        tool_name=action.tool_name,
-                        success=False,
-                        summary="Tool execution failed.",
-                        details=str(exc),
-                        duration_ms=0,
+                    self._redact_tool_result(
+                        ToolResult(
+                            tool_name=action.tool_name,
+                            success=False,
+                            summary="Tool execution failed.",
+                            details=str(exc),
+                            duration_ms=0,
+                        )
                     )
                 )
                 if self._tool_registry.risk_for_tool(action.tool_name) != RiskLevel.READ_ONLY:
@@ -563,6 +605,22 @@ class DaemonState:
         return self._safety_policy.evaluate(
             plan,
             confirmation_timeout_seconds=self._settings.confirmation_timeout_seconds,
+            confirmation_max_attempts=self._settings.confirmation_max_attempts,
+        )
+
+    def _redact_tool_result(self, result: ToolResult) -> ToolResult:
+        try:
+            policy = self._tool_registry.policy_for_tool(result.tool_name)
+        except ToolExecutionError:
+            keys = []
+        else:
+            keys = policy.redacted_data_keys
+        redacted_keys = set(keys) | SENSITIVE_KEYS
+        return result.model_copy(
+            update={
+                "details": redact_sensitive_text(result.details),
+                "data": redact_sensitive_data(result.data, redacted_keys),
+            }
         )
 
     @staticmethod
@@ -657,8 +715,55 @@ RISK_ORDER = {
 }
 
 
+SENSITIVE_KEYS = {
+    "api_key",
+    "authorization",
+    "credential",
+    "password",
+    "secret",
+    "token",
+}
+
+
 def max_risk(left: RiskLevel, right: RiskLevel) -> RiskLevel:
     return left if RISK_ORDER[left] >= RISK_ORDER[right] else right
+
+
+def redact_sensitive_data(value: Any, sensitive_keys: set[str] | None = None) -> Any:
+    keys = sensitive_keys or SENSITIVE_KEYS
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for key, item in value.items():
+            if _is_sensitive_key(str(key), keys):
+                redacted[key] = "[redacted]"
+            else:
+                redacted[key] = redact_sensitive_data(item, keys)
+        return redacted
+    if isinstance(value, list):
+        return [redact_sensitive_data(item, keys) for item in value]
+    if isinstance(value, str):
+        return redact_sensitive_text(value)
+    return value
+
+
+def redact_sensitive_text(value: str) -> str:
+    redacted = value
+    for marker in SENSITIVE_KEYS:
+        redacted = _redact_assignment(redacted, marker)
+    return redacted
+
+
+def _is_sensitive_key(key: str, sensitive_keys: set[str]) -> bool:
+    normalized = key.lower().replace("-", "_")
+    return any(marker in normalized for marker in sensitive_keys)
+
+
+def _redact_assignment(value: str, marker: str) -> str:
+    pattern = re.compile(
+        rf"({marker}\s*[:=]\s*)([^\s,;]+)",
+        flags=re.IGNORECASE,
+    )
+    return pattern.sub(r"\1[redacted]", value)
 
 
 daemon_state = DaemonState()

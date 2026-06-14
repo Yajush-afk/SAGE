@@ -97,11 +97,20 @@ class SpeechResult(SageModel):
     error: str | None = None
 
 
+class ToolPolicy(SageModel):
+    risk: RiskLevel
+    requires_confirmation: bool = False
+    user_visible: bool = True
+    allowed_path_args: list[str] = Field(default_factory=list)
+    redacted_data_keys: list[str] = Field(default_factory=list)
+
+
 class ToolSchema(SageModel):
     name: str = Field(min_length=1)
     description: str = Field(min_length=1)
     risk: RiskLevel
     parameters_schema: dict[str, Any]
+    policy: ToolPolicy | None = None
 
 
 class AudioRecording(SageModel):
@@ -150,6 +159,10 @@ class SafetyDecision(SageModel):
     reason: str = Field(min_length=1)
     confirmation_phrase: str | None = None
     expires_at: datetime | None = None
+    category: str = ""
+    attempts: int = Field(default=0, ge=0)
+    max_attempts: int = Field(default=3, ge=1)
+    blocked_by: str | None = None
 
 
 class CommandRecord(SageModel):
@@ -197,6 +210,7 @@ class RuntimeSettings(SageModel):
     ollama_num_ctx: int = Field(default=4096, ge=512, le=262144)
     planner_repair_attempts: int = Field(default=1, ge=0, le=3)
     confirmation_timeout_seconds: int = Field(default=30, ge=5, le=300)
+    confirmation_max_attempts: int = Field(default=3, ge=1, le=10)
     tool_timeout_seconds: int = Field(default=120, ge=1, le=600)
 
 
@@ -229,6 +243,7 @@ class RuntimeSettingsUpdate(SageModel):
     ollama_num_ctx: int | None = Field(default=None, ge=512, le=262144)
     planner_repair_attempts: int | None = Field(default=None, ge=0, le=3)
     confirmation_timeout_seconds: int | None = Field(default=None, ge=5, le=300)
+    confirmation_max_attempts: int | None = Field(default=None, ge=1, le=10)
     tool_timeout_seconds: int | None = Field(default=None, ge=1, le=600)
 
 
@@ -372,6 +387,7 @@ def export_contract_schemas() -> dict[str, dict[str, Any]]:
         "ToolResult": ToolResult.model_json_schema(),
         "ExecutionResult": ExecutionResult.model_json_schema(),
         "ToolSchema": ToolSchema.model_json_schema(),
+        "ToolPolicy": ToolPolicy.model_json_schema(),
         "AudioRecording": AudioRecording.model_json_schema(),
         "TranscriptionResult": TranscriptionResult.model_json_schema(),
         "SpeechResult": SpeechResult.model_json_schema(),

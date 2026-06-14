@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from pydantic import BaseModel
 
 from sage.api import create_app
 from sage.contracts import (
@@ -10,11 +11,14 @@ from sage.contracts import (
     RuntimeSettings,
     RuntimeSettingsUpdate,
     ToolCall,
+    ToolResult,
     TranscriptionResult,
     WorkflowStep,
 )
 from sage.daemon.state import DaemonState
 from sage.memory import InMemoryStore
+from sage.tools import ToolRegistry
+from sage.tools.registry import BaseTool, ExecutionContext
 from sage.tts import NullTTSProvider
 
 
@@ -152,6 +156,47 @@ class ReadOnlyFailureThenSuccessPlanner:
                 ToolCall(tool_name="show_file_excerpt", arguments={"path": "missing.md"}),
                 ToolCall(tool_name="detect_project", arguments={}),
             ],
+            risk=RiskLevel.READ_ONLY,
+            requires_confirmation=False,
+        )
+
+
+class SecretResultArgs(BaseModel):
+    pass
+
+
+class SecretResultTool(BaseTool):
+    name = "sensitive_result"
+    description = "Return data that should be redacted."
+    risk = RiskLevel.READ_ONLY
+    args_model = SecretResultArgs
+
+    def run(self, args: SecretResultArgs, context: ExecutionContext) -> ToolResult:
+        return ToolResult(
+            tool_name=self.name,
+            success=True,
+            summary="Returned secret data.",
+            details="token=abc123 password=hunter2",
+            data={
+                "api_key": "abc123",
+                "nested": {"password": "hunter2", "safe": "visible"},
+            },
+            duration_ms=0,
+        )
+
+
+class SecretResultPlanner:
+    def plan(
+        self,
+        transcript: str,
+        context: PlannerContext,
+        settings: RuntimeSettings,
+    ) -> IntentPlan:
+        return IntentPlan(
+            intent="sensitive_result",
+            confidence=0.9,
+            summary="Return secret result.",
+            actions=[ToolCall(tool_name="sensitive_result", arguments={})],
             risk=RiskLevel.READ_ONLY,
             requires_confirmation=False,
         )
@@ -347,6 +392,7 @@ def test_settings_can_be_read_and_updated():
             "planner_provider": "custom_http",
             "planner_api_url": "https://planner.example.test/v1/chat",
             "planner_api_key_env": "SAGE_PLANNER_API_KEY",
+            "confirmation_max_attempts": 4,
         },
     )
 
@@ -362,6 +408,7 @@ def test_settings_can_be_read_and_updated():
     assert updated.json()["whisper_timeout_seconds"] == 60
     assert updated.json()["planner_provider"] == "custom_http"
     assert updated.json()["planner_api_key_env"] == "SAGE_PLANNER_API_KEY"
+    assert updated.json()["confirmation_max_attempts"] == 4
 
 
 def test_unimplemented_planner_provider_fails_for_llm_fallback_commands(tmp_path):
@@ -452,6 +499,47 @@ def test_confirm_command_rejects_wrong_phrase():
     recent = client.get("/commands/recent?limit=1")
 
     assert recent.json()[0]["status"] == "awaiting_confirmation"
+    assert recent.json()[0]["safety_decision"]["attempts"] == 1
+
+
+def test_confirmation_attempts_exhaust_command():
+    state = make_state(planner=FakePlanner())
+    state.update_settings(RuntimeSettingsUpdate(confirmation_max_attempts=2))
+    client = make_client(state)
+    planned = client.post(
+        "/commands/text",
+        json={"command_text": "start the frontend", "source": "api"},
+    )
+
+    first = client.post(f"/commands/{planned.json()['id']}/confirm", json={"phrase": "wrong"})
+    second = client.post(f"/commands/{planned.json()['id']}/confirm", json={"phrase": "wrong"})
+
+    assert first.json()["status"] == "awaiting_confirmation"
+    assert first.json()["safety_decision"]["attempts"] == 1
+    assert second.json()["status"] == "failed"
+    assert second.json()["safety_decision"]["category"] == "confirmation_attempts_exhausted"
+    assert second.json()["safety_decision"]["blocked_by"] == "confirmation_attempt_limit"
+
+
+def test_expired_confirmation_updates_visible_safety_decision():
+    state = make_state(planner=FakePlanner())
+    state.update_settings(RuntimeSettingsUpdate(confirmation_timeout_seconds=5))
+    client = make_client(state)
+    planned = client.post(
+        "/commands/text",
+        json={"command_text": "start the frontend", "source": "api"},
+    ).json()
+    record = state.get_command(planned["id"])
+    expired_decision = record.safety_decision.model_copy(
+        update={"expires_at": record.created_at}
+    )
+    state._replace_command(record.model_copy(update={"safety_decision": expired_decision}))
+
+    response = client.post(f"/commands/{planned['id']}/confirm", json={"phrase": "confirm start"})
+
+    assert response.json()["status"] == "failed"
+    assert response.json()["safety_decision"]["category"] == "confirmation_expired"
+    assert response.json()["safety_decision"]["blocked_by"] == "confirmation_timeout"
 
 
 def test_cancel_command_updates_status():
@@ -715,6 +803,28 @@ def test_unknown_tool_is_blocked(tmp_path):
     assert response.status_code == 200
     assert response.json()["status"] == "blocked"
     assert "unknown tool" in response.json()["error"]
+
+
+def test_tool_result_sensitive_data_is_redacted(tmp_path):
+    registry = ToolRegistry(tools=[SecretResultTool()])
+    client = make_client(
+        make_state(
+            planner=SecretResultPlanner(),
+            tool_registry=registry,
+        )
+    )
+
+    response = client.post(
+        "/commands/text",
+        json={"command_text": "show secret result", "source": "api", "cwd": str(tmp_path)},
+    )
+
+    result = response.json()["execution_result"]["tool_results"][0]
+    assert result["data"]["api_key"] == "[redacted]"
+    assert result["data"]["nested"]["password"] == "[redacted]"
+    assert result["data"]["nested"]["safe"] == "visible"
+    assert "abc123" not in result["details"]
+    assert "hunter2" not in result["details"]
 
 
 def test_text_command_rejects_missing_cwd():
