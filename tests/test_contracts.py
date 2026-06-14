@@ -125,6 +125,8 @@ def test_schema_export_includes_planner_contracts():
     assert "TranscriptionResult" in schemas
     assert "SafetyDecision" in schemas
     assert "WorkflowRunRequest" in schemas
+    assert "StorageCleanupRequest" in schemas
+    assert "StorageCleanupResult" in schemas
     assert schemas["IntentPlan"]["additionalProperties"] is False
 
 

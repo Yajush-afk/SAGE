@@ -342,6 +342,16 @@ class WorkflowRunRequest(SageModel):
     cwd: Path | None = None
 
 
+class StorageCleanupRequest(SageModel):
+    audio_cache: bool = True
+
+
+class StorageCleanupResult(SageModel):
+    deleted_files: int = Field(ge=0)
+    deleted_bytes: int = Field(ge=0)
+    audio_cache_dir: Path
+
+
 class DiagnosticStatus(SageModel):
     name: str = Field(min_length=1)
     ok: bool
@@ -380,5 +390,7 @@ def export_contract_schemas() -> dict[str, dict[str, Any]]:
         "Workflow": Workflow.model_json_schema(),
         "WorkflowCreateRequest": WorkflowCreateRequest.model_json_schema(),
         "WorkflowRunRequest": WorkflowRunRequest.model_json_schema(),
+        "StorageCleanupRequest": StorageCleanupRequest.model_json_schema(),
+        "StorageCleanupResult": StorageCleanupResult.model_json_schema(),
         "DiagnosticStatus": DiagnosticStatus.model_json_schema(),
     }

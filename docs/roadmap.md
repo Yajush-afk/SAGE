@@ -173,13 +173,18 @@ Deliverables:
 
 ## Phase 9: Internal Provider Abstraction
 
+Status: implemented.
+
 Goal:
 
 - make the planner boundary cleaner without expanding scope.
 
-Planned:
+Deliverables:
 
 - small internal provider interface,
+- planner factory from runtime settings,
+- explicit unsupported-provider planner for reserved future providers,
+- daemon planner rebuild on settings changes,
 - keep Ollama as the only supported concrete provider for portfolio-ready.
 
 Deferred:
@@ -190,18 +195,24 @@ Deferred:
 
 ## Phase 10: Reliability And Runtime Supervision
 
+Status: implemented.
+
 Goal:
 
 - make local demos fail clearly and recoverably.
 
-Planned:
+Deliverables:
 
 - startup port checks,
 - readiness waits,
 - clearer child-process failure output,
 - optional external Whisper mode,
-- structured logs,
 - storage cleanup commands.
+
+Deferred:
+
+- structured log files,
+- process auto-restart policy.
 
 ## Phase 11: Safety Hardening
 

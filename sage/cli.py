@@ -121,6 +121,16 @@ def build_parser() -> argparse.ArgumentParser:
     diagnostics = subcommands.add_parser("diagnostics", help="Show daemon diagnostics.")
     diagnostics.add_argument("--url", default=DEFAULT_DAEMON_URL, help="Daemon base URL.")
 
+    storage = subcommands.add_parser("storage", help="Inspect or clean local SAGE storage.")
+    storage_subcommands = storage.add_subparsers(dest="storage_command")
+    storage_cleanup = storage_subcommands.add_parser("cleanup", help="Clean runtime cache files.")
+    storage_cleanup.add_argument("--url", default=DEFAULT_DAEMON_URL, help="Daemon base URL.")
+    storage_cleanup.add_argument(
+        "--keep-audio-cache",
+        action="store_true",
+        help="Do not delete cached audio files.",
+    )
+
     profile = subcommands.add_parser("profile", help="Inspect or update the local SAGE profile.")
     profile_subcommands = profile.add_subparsers(dest="profile_command")
     profile_show = profile_subcommands.add_parser("show", help="Show the assistant profile.")
@@ -301,6 +311,15 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "diagnostics":
             status, body = request_json("GET", daemon_url(args.url, "/diagnostics"))
+            print_json(body)
+            return 0 if status < 400 else 1
+
+        if args.command == "storage" and args.storage_command == "cleanup":
+            status, body = request_json(
+                "POST",
+                daemon_url(args.url, "/storage/cleanup"),
+                {"audio_cache": not args.keep_audio_cache},
+            )
             print_json(body)
             return 0 if status < 400 else 1
 

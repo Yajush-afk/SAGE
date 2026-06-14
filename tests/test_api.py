@@ -850,3 +850,20 @@ def test_storage_endpoint_returns_stats():
 
     assert response.status_code == 200
     assert response.json()["path"] == "memory"
+
+
+def test_storage_cleanup_deletes_audio_cache_files(tmp_path):
+    state = make_state()
+    cache_dir = tmp_path / "audio"
+    cache_dir.mkdir()
+    (cache_dir / "one.wav").write_bytes(b"1234")
+    (cache_dir / "two.wav").write_bytes(b"12")
+    state.update_settings(RuntimeSettingsUpdate(audio_cache_dir=cache_dir))
+    client = make_client(state)
+
+    response = client.post("/storage/cleanup", json={"audio_cache": True})
+
+    assert response.status_code == 200
+    assert response.json()["deleted_files"] == 2
+    assert response.json()["deleted_bytes"] == 6
+    assert list(cache_dir.iterdir()) == []

@@ -346,6 +346,26 @@ def test_cli_profile_set_updates_editable_fields(monkeypatch):
     ]
 
 
+def test_cli_storage_cleanup_posts_cleanup_request(monkeypatch, capsys):
+    calls = []
+
+    def fake_request_json(method, url, payload=None, *, timeout_seconds=5):
+        calls.append((method, url, payload))
+        return 200, {"deleted_files": 2, "deleted_bytes": 6}
+
+    monkeypatch.setattr("sage.cli.request_json", fake_request_json)
+
+    exit_code = main(["storage", "cleanup", "--url", "http://daemon.local"])
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert calls == [
+        ("POST", "http://daemon.local/storage/cleanup", {"audio_cache": True})
+    ]
+    assert '"deleted_files": 2' in captured.out
+
+
 def test_cli_doctor_returns_failure_when_required_check_fails(monkeypatch, capsys):
     class Diagnostic:
         def __init__(self, ok, required):

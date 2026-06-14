@@ -85,6 +85,10 @@ http://127.0.0.1:2022/v1/audio/transcriptions
 `whisper_model_path` points to a real local model file. The model itself is not
 tracked in this repo.
 
+If you already run Whisper separately, set `whisper_provider` to
+`whisper_cpp_http`. In that mode `sage start` uses the configured
+`whisper_endpoint` and does not launch `whisper-server`.
+
 ### Piper
 
 Piper is optional at runtime, but enabled by default. Configure:
@@ -188,6 +192,14 @@ Use JSON output when scripting:
 
 ```bash
 .venv/bin/sage doctor --json
+```
+
+## Cleanup
+
+Remove cached audio/runtime files through the daemon:
+
+```bash
+.venv/bin/sage storage cleanup
 ```
 
 `sage diagnostics` reads diagnostics through the running daemon API and returns

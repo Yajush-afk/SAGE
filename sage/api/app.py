@@ -15,6 +15,8 @@ from sage.contracts import (
     HealthResponse,
     RuntimeSettings,
     RuntimeSettingsUpdate,
+    StorageCleanupRequest,
+    StorageCleanupResult,
     TextCommandRequest,
     ToolSchema,
     Workflow,
@@ -126,6 +128,10 @@ def create_app(state: DaemonState | None = None) -> FastAPI:
     @app.get("/storage")
     def storage() -> dict[str, int | str]:
         return runtime_state.storage_stats()
+
+    @app.post("/storage/cleanup", response_model=StorageCleanupResult)
+    def cleanup_storage(request: StorageCleanupRequest) -> StorageCleanupResult:
+        return runtime_state.cleanup_storage(audio_cache=request.audio_cache)
 
     @app.get("/settings", response_model=RuntimeSettings)
     def get_settings() -> RuntimeSettings:

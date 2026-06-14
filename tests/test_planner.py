@@ -9,6 +9,8 @@ from sage.contracts import PlannerContext, RiskLevel, RuntimeSettings
 from sage.planner import (
     OllamaPlanner,
     PlannerError,
+    UnsupportedPlanner,
+    build_planner,
     build_planner_messages,
     format_ollama_error,
     parse_intent_plan,
@@ -261,6 +263,19 @@ def test_ollama_planner_uses_injected_chat_provider(tmp_path):
 
     assert plan.intent == "inspect_project"
     assert plan.actions[0].tool_name == "detect_project"
+
+
+def test_build_planner_returns_ollama_planner_for_ollama_provider():
+    planner = build_planner(RuntimeSettings(planner_provider="ollama"))
+
+    assert isinstance(planner, OllamaPlanner)
+
+
+def test_build_planner_returns_unsupported_planner_for_reserved_provider():
+    planner = build_planner(RuntimeSettings(planner_provider="custom_http"))
+
+    assert isinstance(planner, UnsupportedPlanner)
+    assert planner.provider == "custom_http"
 
 
 def test_ollama_planner_repairs_invalid_output(monkeypatch, tmp_path):

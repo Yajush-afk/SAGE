@@ -26,6 +26,7 @@ from sage.contracts import (
     RuntimeSettingsUpdate,
     SafetyAction,
     SafetyDecision,
+    StorageCleanupResult,
     TextCommandRequest,
     ToolCall,
     ToolResult,
@@ -34,7 +35,7 @@ from sage.contracts import (
 )
 from sage.memory import SQLiteStore
 from sage.observability import run_diagnostics
-from sage.planner import OllamaPlanner, Planner, PlannerError, direct_plan
+from sage.planner import Planner, PlannerError, build_planner, direct_plan
 from sage.response import NO_TOOL_MESSAGE, format_execution_summary, format_spoken_text
 from sage.safety import SafetyPolicy, confirmation_matches
 from sage.stt import STTProvider, TranscriptionError, build_stt_provider
@@ -79,7 +80,8 @@ class DaemonState:
             self._recent_commands.append(record)
         self._recorder = recorder or FfmpegAudioRecorder()
         self._stt_provider = stt_provider
-        self._planner = planner or OllamaPlanner()
+        self._planner_injected = planner is not None
+        self._planner = planner or build_planner(self._settings)
         self._safety_policy = safety_policy or SafetyPolicy()
         self._tool_registry = tool_registry or ToolRegistry()
         self._tts_provider = tts_provider or PiperTTSProvider()
@@ -104,6 +106,8 @@ class DaemonState:
         old_database_path = self._settings.database_path
         updates = update.model_dump(exclude_unset=True)
         self._settings = self._settings.model_copy(update=updates)
+        if not self._planner_injected:
+            self._planner = build_planner(self._settings)
         if (
             self._settings.database_path != old_database_path
             and isinstance(self._store, SQLiteStore)
@@ -201,6 +205,29 @@ class DaemonState:
 
     def storage_stats(self) -> dict[str, int | str]:
         return self._store.stats()
+
+    def cleanup_storage(self, *, audio_cache: bool = True) -> StorageCleanupResult:
+        deleted_files = 0
+        deleted_bytes = 0
+        audio_cache_dir = self._settings.audio_cache_dir
+
+        if audio_cache and audio_cache_dir.exists():
+            for path in sorted(audio_cache_dir.glob("*")):
+                if not path.is_file():
+                    continue
+                try:
+                    size = path.stat().st_size
+                    path.unlink()
+                except OSError:
+                    continue
+                deleted_files += 1
+                deleted_bytes += size
+
+        return StorageCleanupResult(
+            deleted_files=deleted_files,
+            deleted_bytes=deleted_bytes,
+            audio_cache_dir=audio_cache_dir,
+        )
 
     def accept_text_command(self, request: TextCommandRequest) -> CommandRecord:
         now = datetime.now(UTC)
@@ -383,11 +410,6 @@ class DaemonState:
         direct = direct_plan(transcript)
         if direct is not None:
             return direct
-        if self._settings.planner_provider != "ollama":
-            raise PlannerError(
-                f"planner_provider={self._settings.planner_provider} is configured, "
-                "but only ollama is implemented right now."
-            )
         context = PlannerContext(
             cwd=cwd,
             assistant_profile=self._profile,

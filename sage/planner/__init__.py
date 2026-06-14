@@ -1,6 +1,7 @@
 """Intent planning package."""
 
 from sage.planner.direct import direct_plan
+from sage.planner.factory import UnsupportedPlanner, build_planner
 from sage.planner.ollama import (
     OllamaChatProvider,
     OllamaPlanner,
@@ -18,7 +19,9 @@ __all__ = [
     "Planner",
     "PlannerChatProvider",
     "PlannerError",
+    "UnsupportedPlanner",
     "build_planner_messages",
+    "build_planner",
     "direct_plan",
     "format_ollama_error",
     "parse_intent_plan",
